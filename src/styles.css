@@ -846,24 +846,90 @@ button:disabled {
   font-weight: 800;
 }
 
+.turn-confirm-panel {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.timer-card,
+.move-confirm-card {
+  display: grid;
+  gap: 9px;
+  padding: 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.timer-card span,
+.move-confirm-card span {
+  color: #526173;
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
+.timer-card strong {
+  color: var(--brand-ink);
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.timer-track {
+  height: 8px;
+  overflow: hidden;
+  background: #e2e8f0;
+  border-radius: 999px;
+}
+
+.timer-track i {
+  display: block;
+  height: 100%;
+  background: var(--brand-accent);
+  border-radius: inherit;
+  transition: width 220ms ease;
+}
+
+.move-confirm-card small {
+  color: #b91c1c;
+  font-weight: 800;
+}
+
+.move-confirm-card .primary-action {
+  justify-self: start;
+  width: auto;
+  margin-top: 0;
+}
+
 .gomoku-board {
   --board-size: 15;
+  position: relative;
   display: grid;
   grid-template-columns: repeat(var(--board-size), minmax(0, 1fr));
   width: min(100%, 680px);
   aspect-ratio: 1;
   margin: 0 auto;
-  padding: 8px;
-  background:
-    linear-gradient(#9b6b2f 1px, transparent 1px),
-    linear-gradient(90deg, #9b6b2f 1px, transparent 1px),
-    #d7a85f;
-  background-size: calc(100% / 14) calc(100% / 14);
+  padding: 0;
+  background: #d7a85f;
   border: 3px solid #8b5a23;
   border-radius: 8px;
+  overflow: hidden;
+}
+
+.gomoku-board::before {
+  position: absolute;
+  inset: calc(100% / 30);
+  content: "";
+  background:
+    linear-gradient(#9b6b2f 1px, transparent 1px),
+    linear-gradient(90deg, #9b6b2f 1px, transparent 1px);
+  background-size: calc(100% / 14) calc(100% / 14);
+  background-position: 0 0;
+  pointer-events: none;
 }
 
 .cell {
+  position: relative;
   display: grid;
   place-items: center;
   min-width: 0;
@@ -872,10 +938,26 @@ button:disabled {
   background: transparent;
   border: 0;
   border-radius: 50%;
+  z-index: 1;
 }
 
-.cell:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.3);
+.cell.selectable::before {
+  position: absolute;
+  width: 22%;
+  height: 22%;
+  content: "";
+  background: rgba(6, 47, 70, 0.28);
+  border-radius: 50%;
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+
+.cell.selectable:hover::before {
+  opacity: 1;
+}
+
+.cell.selected {
+  background: rgba(255, 85, 66, 0.18);
 }
 
 .cell.winning {
@@ -883,11 +965,19 @@ button:disabled {
 }
 
 .stone {
+  position: relative;
+  z-index: 2;
   display: inline-block;
   width: 72%;
   height: 72%;
   border-radius: 50%;
   box-shadow: inset 0 -4px 10px rgba(0, 0, 0, 0.2);
+}
+
+.stone.preview {
+  opacity: 0.55;
+  outline: 3px solid var(--brand-accent);
+  outline-offset: 2px;
 }
 
 .stone.black {
@@ -1063,5 +1153,13 @@ button:disabled {
 
   .dice-panel {
     grid-template-columns: 1fr;
+  }
+
+  .turn-confirm-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .move-confirm-card .primary-action {
+    width: 100%;
   }
 }

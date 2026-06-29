@@ -92,6 +92,8 @@ const io = new Server(server, {
 const supabase = createSupabaseClient();
 const rooms = new Map<string, Room>();
 const cleanupTimers = new Map<string, NodeJS.Timeout>();
+const gomokuTurnTimers = new Map<string, NodeJS.Timeout>();
+const GOMOKU_TURN_MS = 5 * 60 * 1000;
 
 const palette = [
   "#0ea5a4",
@@ -269,6 +271,7 @@ io.on("connection", (socket: SocketWithData) => {
 
     context.room.phase = "playing";
     context.room.gameState = createInitialGameState(context.room);
+    scheduleGomokuTurnTimer(context.room);
     context.room.players.forEach((player) => {
       player.ready = false;
     });
@@ -290,6 +293,7 @@ io.on("connection", (socket: SocketWithData) => {
 
     context.room.phase = "lobby";
     context.room.gameState = null;
+    clearGomokuTurnTimer(context.room.code);
     context.room.players.forEach((player) => {
       player.ready = false;
     });
@@ -412,6 +416,7 @@ function leaveCurrentRoom(socket: SocketWithData, explicit: boolean) {
   }
 
   if (room.players.length === 0) {
+    clearGomokuTurnTimer(room.code);
     rooms.delete(room.code);
     return;
   }
@@ -499,6 +504,8 @@ function createGomokuState(room: Room): GomokuPublicState {
     size,
     board: Array.from({ length: size }, () => Array<GomokuStone | null>(size).fill(null)),
     currentPlayerId: room.players[0]?.id,
+    turnDurationMs: GOMOKU_TURN_MS,
+    turnEndsAt: Date.now() + GOMOKU_TURN_MS,
     playerStones,
     moves: 0
   };
@@ -671,6 +678,10 @@ function applyGomokuAction(
 ): string | null {
   if (payload.type !== "gomoku:place") return "这个操作不属于五子棋。";
   if (state.winnerId || state.isDraw) return "本局已经结束。";
+  if (isGomokuTurnExpired(state)) {
+    resolveGomokuTimeout(room, state, state.currentPlayerId);
+    return null;
+  }
   if (player.id !== state.currentPlayerId) return "还没轮到你。";
   if (!Number.isInteger(payload.x) || !Number.isInteger(payload.y)) {
     return "落子位置无效。";
@@ -692,7 +703,10 @@ function applyGomokuAction(
     state.winnerId = player.id;
     state.winningLine = winningLine;
     state.currentPlayerId = undefined;
+    state.turnEndsAt = undefined;
+    state.resultReason = "五子连珠，获胜。";
     room.phase = "ended";
+    clearGomokuTurnTimer(room.code);
     void recordGameResult(room, [player.id]);
     return null;
   }
@@ -700,7 +714,10 @@ function applyGomokuAction(
   if (state.moves >= state.size * state.size) {
     state.isDraw = true;
     state.currentPlayerId = undefined;
+    state.turnEndsAt = undefined;
+    state.resultReason = "棋盘已满，平局。";
     room.phase = "ended";
+    clearGomokuTurnTimer(room.code);
     void recordGameResult(room, [], true);
     return null;
   }
@@ -709,7 +726,87 @@ function applyGomokuAction(
     (entry) => entry.id !== player.id && state.playerStones[entry.id]
   );
   state.currentPlayerId = nextPlayer?.id;
+  state.turnEndsAt = state.currentPlayerId ? Date.now() + GOMOKU_TURN_MS : undefined;
+  scheduleGomokuTurnTimer(room);
   return null;
+}
+
+function isGomokuTurnExpired(state: GomokuPublicState) {
+  return Boolean(
+    state.currentPlayerId &&
+      state.turnEndsAt &&
+      !state.winnerId &&
+      !state.isDraw &&
+      Date.now() >= state.turnEndsAt
+  );
+}
+
+function scheduleGomokuTurnTimer(room: Room) {
+  clearGomokuTurnTimer(room.code);
+  const state = room.gameState;
+  if (
+    room.phase !== "playing" ||
+    !state ||
+    state.type !== "gomoku" ||
+    !state.currentPlayerId ||
+    !state.turnEndsAt ||
+    state.winnerId ||
+    state.isDraw
+  ) {
+    return;
+  }
+
+  const expectedPlayerId = state.currentPlayerId;
+  const delay = Math.max(0, state.turnEndsAt - Date.now());
+  const timer = setTimeout(() => {
+    const currentRoom = rooms.get(room.code);
+    const currentState = currentRoom?.gameState;
+    if (
+      !currentRoom ||
+      currentRoom.phase !== "playing" ||
+      !currentState ||
+      currentState.type !== "gomoku" ||
+      currentState.currentPlayerId !== expectedPlayerId ||
+      !isGomokuTurnExpired(currentState)
+    ) {
+      return;
+    }
+
+    resolveGomokuTimeout(currentRoom, currentState, expectedPlayerId);
+    void snapshotRoom(currentRoom);
+    emitRoom(currentRoom);
+  }, delay + 100);
+
+  gomokuTurnTimers.set(room.code, timer);
+}
+
+function clearGomokuTurnTimer(roomCode: string) {
+  const timer = gomokuTurnTimers.get(roomCode);
+  if (timer) clearTimeout(timer);
+  gomokuTurnTimers.delete(roomCode);
+}
+
+function resolveGomokuTimeout(
+  room: Room,
+  state: GomokuPublicState,
+  loserId?: string
+) {
+  if (!loserId || state.winnerId || state.isDraw) return;
+  const winner = room.players.find(
+    (entry) => entry.id !== loserId && state.playerStones[entry.id]
+  );
+
+  state.timeoutLoserId = loserId;
+  state.winnerId = winner?.id;
+  state.currentPlayerId = undefined;
+  state.turnEndsAt = undefined;
+  state.resultReason = winner
+    ? "超过 5 分钟未确认落子，超时判负。"
+    : "超过 5 分钟未确认落子，本局结束。";
+  room.phase = "ended";
+  clearGomokuTurnTimer(room.code);
+  emitSystemMessage(room, state.resultReason);
+  void recordGameResult(room, winner ? [winner.id] : [], !winner);
 }
 
 function applyLudoAction(

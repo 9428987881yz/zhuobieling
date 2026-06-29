@@ -79,10 +79,14 @@ export type GomokuPublicState = {
   size: number;
   board: (GomokuStone | null)[][];
   currentPlayerId?: string;
+  turnDurationMs: number;
+  turnEndsAt?: number;
   playerStones: Record<string, GomokuStone>;
   winnerId?: string;
   winningLine?: Array<[number, number]>;
   isDraw?: boolean;
+  timeoutLoserId?: string;
+  resultReason?: string;
   moves: number;
 };
 

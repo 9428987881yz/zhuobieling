@@ -831,12 +831,48 @@ function GomokuGame({
   playerId: string;
   socket: Socket;
 }) {
+  const [selectedMove, setSelectedMove] = useState<{ x: number; y: number } | null>(
+    null
+  );
+  const [now, setNow] = useState(Date.now());
   const current = room.players.find((player) => player.id === state.currentPlayerId);
   const winner = room.players.find((player) => player.id === state.winnerId);
+  const timeoutLoser = room.players.find(
+    (player) => player.id === state.timeoutLoserId
+  );
   const myStone = state.playerStones[playerId];
+  const isMyTurn = state.currentPlayerId === playerId;
+  const canSelectMove = isMyTurn && !state.winnerId && !state.isDraw && Boolean(myStone);
+  const timeLeftMs = Math.max(0, (state.turnEndsAt || 0) - now);
+  const timePercent = state.turnDurationMs
+    ? Math.max(0, Math.min(100, (timeLeftMs / state.turnDurationMs) * 100))
+    : 0;
   const winningSet = new Set(
     state.winningLine?.map(([x, y]) => `${x}:${y}`) || []
   );
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    setSelectedMove(null);
+  }, [state.currentPlayerId, state.moves, state.winnerId, state.isDraw]);
+
+  function selectMove(x: number, y: number) {
+    if (!canSelectMove || state.board[y][x]) return;
+    setSelectedMove({ x, y });
+  }
+
+  function confirmMove() {
+    if (!selectedMove || !canSelectMove) return;
+    socket.emit("game:action", {
+      type: "gomoku:place",
+      x: selectedMove.x,
+      y: selectedMove.y
+    });
+  }
 
   return (
     <div className="game-layout gomoku-layout">
@@ -848,6 +884,37 @@ function GomokuGame({
         <span className="stage-pill">
           {winner ? `${winner.name} 胜利` : state.isDraw ? "平局" : `轮到 ${current?.name || "等待"}`}
         </span>
+      </div>
+
+      <div className="turn-confirm-panel">
+        <div className="timer-card">
+          <span>本手剩余</span>
+          <strong>{formatDuration(timeLeftMs)}</strong>
+          <div className="timer-track">
+            <i style={{ width: `${timePercent}%` }} />
+          </div>
+        </div>
+        <div className="move-confirm-card">
+          <span>
+            {state.resultReason ||
+              (canSelectMove
+                ? selectedMove
+                  ? `已选择：第 ${selectedMove.y + 1} 行，第 ${selectedMove.x + 1} 列`
+                  : "先点棋盘选择落点"
+                : current
+                  ? `等待 ${current.name} 确认落子`
+                  : "本局已结束")}
+          </span>
+          {timeoutLoser && <small>{timeoutLoser.name} 超时未确认。</small>}
+          <button
+            className="primary-action"
+            disabled={!selectedMove || !canSelectMove}
+            onClick={confirmMove}
+          >
+            <Check size={19} />
+            确认落子
+          </button>
+        </div>
       </div>
 
       <div className="stone-legend">
@@ -867,20 +934,28 @@ function GomokuGame({
           row.map((stone, x) => (
             <button
               key={`${x}-${y}`}
-              className={winningSet.has(`${x}:${y}`) ? "cell winning" : "cell"}
+              className={[
+                "cell",
+                winningSet.has(`${x}:${y}`) ? "winning" : "",
+                selectedMove?.x === x && selectedMove.y === y ? "selected" : "",
+                canSelectMove && !stone ? "selectable" : ""
+              ]
+                .filter(Boolean)
+                .join(" ")}
               disabled={
                 Boolean(stone) ||
                 Boolean(state.winnerId) ||
                 state.isDraw ||
-                state.currentPlayerId !== playerId ||
+                !canSelectMove ||
                 !myStone
               }
-              onClick={() =>
-                socket.emit("game:action", { type: "gomoku:place", x, y })
-              }
+              onClick={() => selectMove(x, y)}
               aria-label={`第 ${y + 1} 行第 ${x + 1} 列`}
             >
               {stone && <i className={`stone ${stone}`} />}
+              {!stone && selectedMove?.x === x && selectedMove.y === y && myStone && (
+                <i className={`stone preview ${myStone}`} />
+              )}
             </button>
           ))
         )}
@@ -1226,6 +1301,13 @@ function normalizeRoomCode(value: string) {
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "")
     .slice(0, 6);
+}
+
+function formatDuration(ms: number) {
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
 function initialOf(name: string) {
