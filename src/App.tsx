@@ -1,4 +1,11 @@
-import { CSSProperties, FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  CSSProperties,
+  FormEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from "react";
 import {
   Check,
   CircleDot,
@@ -12,6 +19,7 @@ import {
   KeyRound,
   LogOut,
   Play,
+  QrCode,
   RefreshCw,
   Send,
   Sparkles,
@@ -20,6 +28,7 @@ import {
   Wifi,
   WifiOff
 } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import { io, Socket } from "socket.io-client";
 import type { Session } from "@supabase/supabase-js";
 import {
@@ -54,18 +63,21 @@ const socketUrl =
   (import.meta.env.DEV ? "http://localhost:3001" : window.location.origin);
 
 const BRAND_NAME = "桌别零";
+const initialInviteCode = normalizeRoomCode(
+  new URLSearchParams(window.location.search).get("room") || ""
+);
 const playerId = getSessionPlayerId();
 
 export default function App() {
   const [socketConnected, setSocketConnected] = useState(false);
   const [room, setRoom] = useState<RoomView | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const autoJoinAttemptedRef = useRef(false);
   const [guestName, setGuestName] = useState(
     localStorage.getItem("board-room-guest-name") || "新玩家"
   );
   const [roomCode, setRoomCode] = useState(() => {
-    const queryCode = new URLSearchParams(window.location.search).get("room");
-    return queryCode || localStorage.getItem("board-room-last-room") || "";
+    return initialInviteCode || localStorage.getItem("board-room-last-room") || "";
   });
   const [selectedGame, setSelectedGame] = useState<GameType>("undercover");
   const [session, setSession] = useState<Session | null>(null);
@@ -128,6 +140,29 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("board-room-guest-name", guestName);
   }, [guestName]);
+
+  useEffect(() => {
+    if (
+      !socketConnected ||
+      room ||
+      !initialInviteCode ||
+      autoJoinAttemptedRef.current
+    ) {
+      return;
+    }
+
+    autoJoinAttemptedRef.current = true;
+    socket.emit("room:join", {
+      code: initialInviteCode,
+      playerId,
+      playerName: displayName || "新玩家",
+      profile: authProfile
+    });
+    setNotice({
+      tone: "info",
+      text: `正在加入房间 ${initialInviteCode}...`
+    });
+  }, [authProfile, displayName, room, socket, socketConnected]);
 
   useEffect(() => {
     if (!notice) return;
@@ -291,6 +326,7 @@ export default function App() {
         playerId={playerId}
         socket={socket}
         onLeave={leaveRoom}
+        onNotice={setNotice}
         socketConnected={socketConnected}
         notice={notice}
       />
@@ -422,6 +458,7 @@ function RoomScreen({
   playerId,
   socket,
   onLeave,
+  onNotice,
   socketConnected,
   notice
 }: {
@@ -429,6 +466,7 @@ function RoomScreen({
   playerId: string;
   socket: Socket;
   onLeave: () => void;
+  onNotice: (notice: Notice) => void;
   socketConnected: boolean;
   notice: Notice | null;
 }) {
@@ -437,6 +475,7 @@ function RoomScreen({
   const isHost = room.hostId === playerId;
   const gameMeta = GAME_META[room.selectedGame];
   const shareLink = `${window.location.origin}${window.location.pathname}?room=${room.code}`;
+  const inviteText = `来桌别零一起玩 ${gameMeta.name}，房间号 ${room.code}：${shareLink}`;
   const connectedPlayers = room.players.filter((player) => player.connected);
   const allReady = connectedPlayers
     .filter((player) => player.id !== room.hostId)
@@ -450,8 +489,13 @@ function RoomScreen({
     setChatText("");
   }
 
-  async function copyRoom() {
-    await navigator.clipboard.writeText(shareLink);
+  async function copyInvite() {
+    try {
+      await navigator.clipboard.writeText(inviteText);
+      onNotice({ tone: "success", text: "邀请文案已复制。" });
+    } catch {
+      onNotice({ tone: "error", text: "复制失败，请手动复制房间链接。" });
+    }
   }
 
   return (
@@ -467,9 +511,9 @@ function RoomScreen({
           </div>
         </div>
         <div className="room-actions">
-          <button className="icon-text-button" onClick={copyRoom}>
+          <button className="icon-text-button" onClick={copyInvite}>
             <Copy size={18} />
-            复制链接
+            复制邀请
           </button>
           <button className="icon-text-button danger" onClick={onLeave}>
             <LogOut size={18} />
@@ -485,6 +529,28 @@ function RoomScreen({
           <div className={socketConnected ? "status online" : "status offline"}>
             {socketConnected ? <Wifi size={16} /> : <WifiOff size={16} />}
             {socketConnected ? "同步中" : "离线"}
+          </div>
+
+          <div className="invite-block">
+            <div className="invite-heading">
+              <QrCode size={18} />
+              <h2>邀请好友</h2>
+            </div>
+            <div className="qr-frame">
+              <QRCodeSVG
+                value={shareLink}
+                size={150}
+                bgColor="#ffffff"
+                fgColor="#062f46"
+                marginSize={2}
+              />
+            </div>
+            <code className="room-code-badge">{room.code}</code>
+            <p className="hint">朋友扫码或打开邀请链接后，会自动尝试加入这个房间。</p>
+            <button className="secondary-action" onClick={copyInvite}>
+              <Copy size={18} />
+              复制邀请文案
+            </button>
           </div>
 
           <div className="room-control-block">
@@ -1153,6 +1219,13 @@ function getSessionPlayerId() {
       : `player_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
   sessionStorage.setItem(key, id);
   return id;
+}
+
+function normalizeRoomCode(value: string) {
+  return value
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 6);
 }
 
 function initialOf(name: string) {

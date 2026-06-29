@@ -429,6 +429,68 @@ button:disabled {
   border-top: 1px solid #e2e8f0;
 }
 
+.invite-block {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 16px;
+  text-align: center;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.invite-heading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  color: var(--brand-ink);
+}
+
+.invite-heading h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  letter-spacing: 0;
+}
+
+.qr-frame {
+  display: grid;
+  place-items: center;
+  width: 178px;
+  height: 178px;
+  background: #fff;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+}
+
+.room-code-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0 12px;
+  color: var(--brand-ink);
+  background: #fff;
+  border: 1px solid #dbe4ef;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 1.05rem;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.invite-block .hint {
+  margin: 0;
+  font-size: 0.88rem;
+}
+
+.invite-block .secondary-action {
+  margin-top: 0;
+}
+
 .player-list {
   display: grid;
   gap: 8px;
