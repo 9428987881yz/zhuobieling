@@ -1,5 +1,4 @@
 import {
-  ChangeEvent,
   CSSProperties,
   FormEvent,
   useEffect,
@@ -18,7 +17,6 @@ import {
   Eye,
   EyeOff,
   Gamepad2,
-  ImagePlus,
   Info,
   KeyRound,
   LogOut,
@@ -38,6 +36,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { io, Socket } from "socket.io-client";
 import type { Session } from "@supabase/supabase-js";
 import {
+  AVATAR_PRESETS,
   GAME_META,
   CatanPublicState,
   CatanResource,
@@ -49,7 +48,9 @@ import {
   PublicGameState,
   RoomView,
   SkipVoteState,
-  UndercoverPublicState
+  UndercoverPublicState,
+  getAvatarPreset,
+  isAvatarPresetValue
 } from "../shared/types";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import brandLogoUrl from "./assets/zhuobieling-logo.jpg";
@@ -247,7 +248,7 @@ export default function App() {
     ? {
         userId: session.user.id,
         name: displayName,
-        avatarUrl: profileAvatarUrl || undefined
+        avatarUrl: isAvatarPresetValue(profileAvatarUrl) ? profileAvatarUrl : undefined
       }
     : undefined;
 
@@ -381,7 +382,7 @@ export default function App() {
     const nextName = payload.displayName || guestName;
     setProfileName(nextName);
     setGuestName(nextName);
-    setProfileAvatarUrl(payload.avatarUrl || "");
+    setProfileAvatarUrl(isAvatarPresetValue(payload.avatarUrl) ? payload.avatarUrl : "");
     setProfileHonorText(payload.honorText || "");
   }
 
@@ -451,6 +452,7 @@ export default function App() {
   ) {
     if (!supabase) return;
     const cleanName = name.trim() || "新玩家";
+    const cleanAvatarUrl = isAvatarPresetValue(avatarUrl) ? avatarUrl : "";
     const profileToken = token || authToken;
     if (!profileToken) {
       setNotice({ tone: "error", text: "请先登录后再保存个人资料。" });
@@ -466,7 +468,7 @@ export default function App() {
       body: JSON.stringify({
         userId,
         displayName: cleanName,
-        avatarUrl,
+        avatarUrl: cleanAvatarUrl,
         honorText
       })
     });
@@ -479,7 +481,7 @@ export default function App() {
 
     const savedName = payload.displayName || cleanName;
     setProfileName(savedName);
-    setProfileAvatarUrl(payload.avatarUrl || "");
+    setProfileAvatarUrl(isAvatarPresetValue(payload.avatarUrl) ? payload.avatarUrl : "");
     setProfileHonorText(payload.honorText || "");
     setGuestName(savedName);
     setNotice({ tone: "success", text: "个人资料已保存。" });
@@ -571,7 +573,6 @@ export default function App() {
         onNameChange={setProfileName}
         onAvatarChange={setProfileAvatarUrl}
         onHonorTextChange={setProfileHonorText}
-        onAvatarError={(text) => setNotice({ tone: "error", text })}
         onProfileSave={() =>
           session?.user &&
           void upsertProfile(
@@ -776,7 +777,6 @@ export default function App() {
               onNameChange={setProfileName}
               onAvatarChange={setProfileAvatarUrl}
               onHonorTextChange={setProfileHonorText}
-              onAvatarError={(text) => setNotice({ tone: "error", text })}
               onSave={() =>
                 void upsertProfile(
                   session.user.id,
@@ -1949,6 +1949,38 @@ function SkipVotePanel({
   );
 }
 
+function AvatarFigure({
+  avatarUrl,
+  fallback,
+  className = ""
+}: {
+  avatarUrl: string;
+  fallback: string;
+  className?: string;
+}) {
+  const preset = getAvatarPreset(avatarUrl);
+
+  if (!preset) {
+    return <span className={`fallback-initial ${className}`.trim()}>{fallback}</span>;
+  }
+
+  const style = {
+    "--avatar-primary": preset.primary,
+    "--avatar-secondary": preset.secondary
+  } as CSSProperties;
+
+  return (
+    <span
+      aria-label={`${preset.name}头像`}
+      className={`preset-avatar ${className}`.trim()}
+      style={style}
+      title={preset.name}
+    >
+      <span className="preset-avatar-mark">{preset.mark}</span>
+    </span>
+  );
+}
+
 function HomeAccountMenu({
   displayName,
   avatarUrl,
@@ -1976,10 +2008,8 @@ function HomeAccountMenu({
         aria-expanded={menuOpen}
         onClick={onToggle}
       >
-        {isSignedIn && avatarUrl ? (
-          <img src={avatarUrl} alt={`${displayName || "用户"}的头像`} />
-        ) : isSignedIn ? (
-          <span>{initialOf(displayName)}</span>
+        {isSignedIn ? (
+          <AvatarFigure avatarUrl={avatarUrl} fallback={initialOf(displayName)} />
         ) : (
           <UserRound size={20} />
         )}
@@ -2027,7 +2057,6 @@ function AccountPage({
   onNameChange,
   onAvatarChange,
   onHonorTextChange,
-  onAvatarError,
   onProfileSave,
   onSignOut,
   onAuthModeChange,
@@ -2050,7 +2079,6 @@ function AccountPage({
   onNameChange: (value: string) => void;
   onAvatarChange: (value: string) => void;
   onHonorTextChange: (value: string) => void;
-  onAvatarError: (text: string) => void;
   onProfileSave: () => void;
   onSignOut: () => void;
   onAuthModeChange: (mode: "signin" | "signup") => void;
@@ -2067,10 +2095,8 @@ function AccountPage({
 
       <section className="account-page-hero">
         <div className="account-page-avatar">
-          {session && avatarUrl ? (
-            <img src={avatarUrl} alt={`${displayName || "用户"}的头像`} />
-          ) : session ? (
-            initialOf(displayName || "新玩家")
+          {session ? (
+            <AvatarFigure avatarUrl={avatarUrl} fallback={initialOf(displayName || "新玩家")} />
           ) : (
             <UserRound size={34} />
           )}
@@ -2096,7 +2122,6 @@ function AccountPage({
               onNameChange={onNameChange}
               onAvatarChange={onAvatarChange}
               onHonorTextChange={onHonorTextChange}
-              onAvatarError={onAvatarError}
               onSave={onProfileSave}
               onSignOut={onSignOut}
             />
@@ -2219,7 +2244,6 @@ function ProfilePanel({
   onNameChange,
   onAvatarChange,
   onHonorTextChange,
-  onAvatarError,
   onSave,
   onSignOut
 }: {
@@ -2231,7 +2255,6 @@ function ProfilePanel({
   onNameChange: (value: string) => void;
   onAvatarChange: (value: string) => void;
   onHonorTextChange: (value: string) => void;
-  onAvatarError: (text: string) => void;
   onSave: () => void;
   onSignOut: () => void;
 }) {
@@ -2240,49 +2263,37 @@ function ProfilePanel({
   const draws = records.filter((record) => record.result === "draw").length;
   const winRate = totalGames ? Math.round((wins / totalGames) * 100) : 0;
 
-  function handleAvatarFile(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      onAvatarError("请选择图片文件作为头像。");
-      return;
-    }
-    if (file.size > 512 * 1024) {
-      onAvatarError("头像图片不能超过 512KB，请先压缩后再上传。");
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === "string") {
-        onAvatarChange(reader.result);
-      }
-    };
-    reader.onerror = () => onAvatarError("读取头像失败，请换一张图片。");
-    reader.readAsDataURL(file);
-  }
-
   return (
     <div className="profile-panel">
       <div className="profile-edit-grid">
         <div className="avatar-editor">
           <div className="avatar-preview">
-            {avatarUrl ? (
-              <img src={avatarUrl} alt={`${name || "用户"}的头像`} />
-            ) : (
-              <span>{initialOf(name || "新玩家")}</span>
-            )}
+            <AvatarFigure avatarUrl={avatarUrl} fallback={initialOf(name || "新玩家")} />
           </div>
           <div className="avatar-actions">
-            <label className="icon-text-button avatar-upload">
-              <ImagePlus size={18} />
-              修改头像
-              <input type="file" accept="image/*" onChange={handleAvatarFile} />
-            </label>
+            <p className="avatar-helper">从 16 个官方头像中选择，不支持自定义上传。</p>
+            <div className="avatar-preset-grid" role="radiogroup" aria-label="选择头像">
+              {AVATAR_PRESETS.map((preset) => (
+                <button
+                  aria-checked={avatarUrl === preset.value}
+                  className={
+                    avatarUrl === preset.value
+                      ? "avatar-preset-option selected"
+                      : "avatar-preset-option"
+                  }
+                  key={preset.value}
+                  onClick={() => onAvatarChange(preset.value)}
+                  title={preset.name}
+                  type="button"
+                  role="radio"
+                >
+                  <AvatarFigure avatarUrl={preset.value} fallback={preset.mark} />
+                </button>
+              ))}
+            </div>
             {avatarUrl && (
               <button className="icon-text-button" type="button" onClick={() => onAvatarChange("")}>
-                移除头像
+                不使用头像
               </button>
             )}
           </div>

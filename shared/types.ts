@@ -29,6 +29,67 @@ export type GameMeta = {
   shortDescription: string;
 };
 
+export const AVATAR_PRESET_IDS = [
+  "zero",
+  "star",
+  "road",
+  "city",
+  "dice",
+  "word",
+  "flag",
+  "island",
+  "circle",
+  "strategy",
+  "ember",
+  "wave",
+  "mountain",
+  "forest",
+  "stone",
+  "crown"
+] as const;
+
+export type AvatarPresetId = (typeof AVATAR_PRESET_IDS)[number];
+export type AvatarPresetValue = `preset:${AvatarPresetId}`;
+
+export type AvatarPreset = {
+  id: AvatarPresetId;
+  value: AvatarPresetValue;
+  name: string;
+  mark: string;
+  primary: string;
+  secondary: string;
+};
+
+export const AVATAR_PRESETS: AvatarPreset[] = [
+  { id: "zero", value: "preset:zero", name: "零号圆桌", mark: "零", primary: "#063047", secondary: "#ff5542" },
+  { id: "star", value: "preset:star", name: "星点玩家", mark: "星", primary: "#1d4ed8", secondary: "#f59e0b" },
+  { id: "road", value: "preset:road", name: "开路先锋", mark: "路", primary: "#0f766e", secondary: "#84cc16" },
+  { id: "city", value: "preset:city", name: "筑城者", mark: "城", primary: "#7c2d12", secondary: "#fb923c" },
+  { id: "dice", value: "preset:dice", name: "骰点好运", mark: "骰", primary: "#312e81", secondary: "#38bdf8" },
+  { id: "word", value: "preset:word", name: "词语大师", mark: "词", primary: "#111827", secondary: "#facc15" },
+  { id: "flag", value: "preset:flag", name: "胜利旗手", mark: "旗", primary: "#be123c", secondary: "#fb7185" },
+  { id: "island", value: "preset:island", name: "海岛旅人", mark: "岛", primary: "#0369a1", secondary: "#2dd4bf" },
+  { id: "circle", value: "preset:circle", name: "圆桌同盟", mark: "圆", primary: "#334155", secondary: "#94a3b8" },
+  { id: "strategy", value: "preset:strategy", name: "策略家", mark: "策", primary: "#365314", secondary: "#bef264" },
+  { id: "ember", value: "preset:ember", name: "炽热回合", mark: "火", primary: "#991b1b", secondary: "#f97316" },
+  { id: "wave", value: "preset:wave", name: "清流布局", mark: "水", primary: "#155e75", secondary: "#67e8f9" },
+  { id: "mountain", value: "preset:mountain", name: "稳山落子", mark: "山", primary: "#3f3f46", secondary: "#a3e635" },
+  { id: "forest", value: "preset:forest", name: "林间计划", mark: "林", primary: "#14532d", secondary: "#22c55e" },
+  { id: "stone", value: "preset:stone", name: "坚石守位", mark: "石", primary: "#475569", secondary: "#cbd5e1" },
+  { id: "crown", value: "preset:crown", name: "冠军席位", mark: "冠", primary: "#713f12", secondary: "#fbbf24" }
+];
+
+export function isAvatarPresetValue(value: unknown): value is AvatarPresetValue {
+  return (
+    typeof value === "string" &&
+    AVATAR_PRESETS.some((preset) => preset.value === value)
+  );
+}
+
+export function getAvatarPreset(value: unknown) {
+  return AVATAR_PRESETS.find((preset) => preset.value === value);
+}
+
 export const GAME_META: Record<GameType, GameMeta> = {
   undercover: {
     type: "undercover",

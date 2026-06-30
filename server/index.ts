@@ -9,6 +9,7 @@ import { Server, Socket } from "socket.io";
 import { createClient, SupabaseClient, type User } from "@supabase/supabase-js";
 import {
   AuthProfile,
+  isAvatarPresetValue,
   CatanEdge,
   CatanHex,
   CatanPlayerState,
@@ -342,7 +343,7 @@ app.get("/api/profile", async (req, res) => {
 
   res.json({
     displayName,
-    avatarUrl: data?.avatar_url || null,
+    avatarUrl: normalizeProfileAvatarUrl(data?.avatar_url),
     honorText: storedHonorText
   });
 });
@@ -725,20 +726,7 @@ function normalizeProfileText(value: unknown, maxLength: number) {
 }
 
 function normalizeProfileAvatarUrl(value: unknown) {
-  if (typeof value !== "string") return null;
-  const clean = value.trim();
-  if (!clean) return null;
-  if (clean.length > 700_000) return null;
-  if (
-    clean.startsWith("data:image/png;base64,") ||
-    clean.startsWith("data:image/jpeg;base64,") ||
-    clean.startsWith("data:image/webp;base64,") ||
-    clean.startsWith("https://") ||
-    clean.startsWith("http://")
-  ) {
-    return clean;
-  }
-  return null;
+  return isAvatarPresetValue(value) ? value : null;
 }
 
 function withoutHonorText<T extends { honor_text?: unknown }>(profile: T) {
@@ -847,7 +835,7 @@ async function requireRegisteredProfile(
   return {
     userId: user.id,
     name: normalizePlayerName(payload.profile?.name || metadataName || emailName),
-    avatarUrl: payload.profile?.avatarUrl
+    avatarUrl: normalizeProfileAvatarUrl(payload.profile?.avatarUrl) || undefined
   };
 }
 
