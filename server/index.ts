@@ -282,11 +282,31 @@ app.get("/api/profile", async (req, res) => {
     return;
   }
 
-  const { data, error } = await supabase
+  type ProfileRow = {
+    display_name?: string | null;
+    avatar_url?: string | null;
+    honor_text?: string | null;
+  };
+
+  let honorColumnReady = true;
+  const profileResult = await supabase
     .from("profiles")
     .select("display_name, avatar_url, honor_text")
     .eq("id", auth.user.id)
     .maybeSingle();
+  let data = profileResult.data as ProfileRow | null;
+  let error: unknown = profileResult.error;
+
+  if (error && isMissingHonorTextColumn(error)) {
+    honorColumnReady = false;
+    const fallback = await supabase
+      .from("profiles")
+      .select("display_name, avatar_url")
+      .eq("id", auth.user.id)
+      .maybeSingle();
+    data = fallback.data as ProfileRow | null;
+    error = fallback.error;
+  }
 
   if (error) {
     res.status(500).json({ error: "读取个人资料失败，请检查 Supabase 配置。" });
@@ -298,13 +318,16 @@ app.get("/api/profile", async (req, res) => {
   );
 
   if (!data) {
-    const { error: insertError } = await supabase.from("profiles").upsert({
+    const baseProfile = {
       id: auth.user.id,
       display_name: displayName,
       avatar_url: null,
       honor_text: "",
       updated_at: new Date().toISOString()
-    });
+    };
+    const { error: insertError } = await supabase
+      .from("profiles")
+      .upsert(honorColumnReady ? baseProfile : withoutHonorText(baseProfile));
 
     if (insertError) {
       res.status(500).json({ error: "创建个人资料失败，请检查 Supabase 配置。" });
@@ -312,10 +335,15 @@ app.get("/api/profile", async (req, res) => {
     }
   }
 
+  const storedHonorText =
+    data && "honor_text" in data && typeof data.honor_text === "string"
+      ? data.honor_text
+      : "";
+
   res.json({
     displayName,
     avatarUrl: data?.avatar_url || null,
-    honorText: data?.honor_text || ""
+    honorText: storedHonorText
   });
 });
 
@@ -334,20 +362,28 @@ app.put("/api/profile", async (req, res) => {
   const displayName = normalizePlayerName(req.body?.displayName);
   const avatarUrl = normalizeProfileAvatarUrl(req.body?.avatarUrl);
   const honorText = normalizeProfileText(req.body?.honorText, 180);
-  const { error } = await supabase.from("profiles").upsert({
+  const baseProfile = {
     id: auth.user.id,
     display_name: displayName,
     avatar_url: avatarUrl,
     honor_text: honorText,
     updated_at: new Date().toISOString()
-  });
+  };
+  let savedHonorText = honorText;
+  let { error } = await supabase.from("profiles").upsert(baseProfile);
+
+  if (error && isMissingHonorTextColumn(error)) {
+    savedHonorText = "";
+    const fallback = await supabase.from("profiles").upsert(withoutHonorText(baseProfile));
+    error = fallback.error;
+  }
 
   if (error) {
     res.status(500).json({ error: "保存个人资料失败。" });
     return;
   }
 
-  res.json({ displayName, avatarUrl, honorText });
+  res.json({ displayName, avatarUrl, honorText: savedHonorText });
 });
 
 const distPath = path.resolve(process.cwd(), "dist");
@@ -703,6 +739,20 @@ function normalizeProfileAvatarUrl(value: unknown) {
     return clean;
   }
   return null;
+}
+
+function withoutHonorText<T extends { honor_text?: unknown }>(profile: T) {
+  const { honor_text: _honorText, ...rest } = profile;
+  return rest;
+}
+
+function isMissingHonorTextColumn(error: unknown) {
+  const known = error as { code?: string; details?: string; message?: string };
+  return (
+    known?.code === "42703" ||
+    known?.message?.includes("honor_text") ||
+    known?.details?.includes("honor_text")
+  );
 }
 
 async function readLoginAttempt(emailHash: string, dayKey: string) {
