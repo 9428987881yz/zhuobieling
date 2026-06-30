@@ -23,6 +23,7 @@ import {
   RoomReadyPayload,
   RoomView,
   SelectGamePayload,
+  SkipVoteChoice,
   UndercoverPublicState
 } from "../shared/types.js";
 
@@ -537,6 +538,14 @@ function applyGameAction(
   const state = room.gameState;
   if (!state) return "游戏还没有开始。";
 
+  if (payload.type === "skip:vote") {
+    return applySkipVote(room, state, player, payload.vote);
+  }
+
+  if (state.skipVote) {
+    return "正在投票是否跳过当前玩家。";
+  }
+
   if (state.type === "undercover") {
     return applyUndercoverAction(room, state, player, payload);
   }
@@ -546,6 +555,100 @@ function applyGameAction(
   }
 
   return applyLudoAction(room, state, player, payload);
+}
+
+function applySkipVote(
+  room: Room,
+  state: InternalGameState,
+  player: InternalPlayer,
+  vote: SkipVoteChoice
+): string | null {
+  const skipVote = state.skipVote;
+  if (!skipVote) return "现在没有需要处理的跳过投票。";
+  if (!skipVote.eligiblePlayerIds.includes(player.id)) {
+    return "你不在本次跳过投票中。";
+  }
+
+  skipVote.votes[player.id] = vote;
+  if (vote === "no") {
+    resumeTimedOutPlayer(room, state, `${player.name} 不同意跳过，当前玩家继续获得 2 分钟。`);
+    return null;
+  }
+
+  const allAgreed = skipVote.eligiblePlayerIds.every(
+    (playerId) => skipVote.votes[playerId] === "yes"
+  );
+  if (allAgreed) {
+    skipTimedOutPlayer(room, state, skipVote.targetPlayerId);
+  }
+
+  return null;
+}
+
+function startSkipVote(
+  room: Room,
+  state: InternalGameState,
+  targetPlayerId: string | undefined,
+  eligiblePlayerIds: string[],
+  message: string
+) {
+  if (!targetPlayerId || state.skipVote) return;
+  const connectedEligibleIds = eligiblePlayerIds.filter((playerId) =>
+    room.players.some((player) => player.id === playerId && player.connected)
+  );
+
+  state.turnEndsAt = undefined;
+  state.skipVote = {
+    targetPlayerId,
+    eligiblePlayerIds: connectedEligibleIds,
+    votes: {},
+    createdAt: Date.now()
+  };
+  setStepMessage(state, message);
+
+  if (connectedEligibleIds.length === 0) {
+    skipTimedOutPlayer(room, state, targetPlayerId);
+  }
+}
+
+function resumeTimedOutPlayer(
+  _room: Room,
+  state: InternalGameState,
+  message: string
+) {
+  state.skipVote = undefined;
+  state.turnEndsAt = Date.now() + GAME_STEP_MS;
+  setStepMessage(state, message);
+}
+
+function skipTimedOutPlayer(
+  room: Room,
+  state: InternalGameState,
+  targetPlayerId: string
+) {
+  const target = room.players.find((player) => player.id === targetPlayerId);
+  const targetName = target?.name || "当前玩家";
+
+  if (state.type === "undercover") {
+    skipUndercoverSpeaker(room, state, `大家同意跳过 ${targetName}，进入下一步。`);
+    return;
+  }
+
+  if (state.type === "gomoku") {
+    skipGomokuTurn(room, state, targetPlayerId, `大家同意跳过 ${targetName} 的本手。`);
+    return;
+  }
+
+  skipLudoTurn(state, targetPlayerId, `大家同意跳过 ${targetName} 的本步。`);
+}
+
+function setStepMessage(state: InternalGameState, message: string) {
+  if (state.type === "undercover") {
+    state.reason = message;
+    return;
+  }
+
+  state.resultReason = message;
 }
 
 function applyUndercoverAction(
@@ -618,22 +721,13 @@ function resolveUndercoverTimeout(room: Room, state: UndercoverInternalState) {
     const speaker = room.players.find(
       (player) => player.id === state.currentSpeakerId
     );
-    const nextSpokenCount = state.spokenCount + 1;
-    state.reason = `${speaker?.name || "当前玩家"} 发言超过 2 分钟，已自动跳到下一步。`;
-
-    if (nextSpokenCount >= activeIds.length) {
-      state.stage = "voting";
-      state.currentSpeakerId = undefined;
-      state.spokenCount = activeIds.length;
-      state.votes = {};
-      state.turnEndsAt = now + GAME_STEP_MS;
-      return;
-    }
-
-    state.spokenCount = nextSpokenCount;
-    state.speakerCursor = nextActiveSpeakerCursor(state);
-    state.currentSpeakerId = state.order[state.speakerCursor];
-    state.turnEndsAt = now + GAME_STEP_MS;
+    startSkipVote(
+      room,
+      state,
+      state.currentSpeakerId,
+      activeIds.filter((playerId) => playerId !== state.currentSpeakerId),
+      `${speaker?.name || "当前玩家"} 发言超过 2 分钟，请大家投票是否跳过。`
+    );
     return;
   }
 
@@ -654,7 +748,34 @@ function resolveUndercoverTimeout(room: Room, state: UndercoverInternalState) {
   state.turnEndsAt = now + GAME_STEP_MS;
 }
 
+function skipUndercoverSpeaker(
+  _room: Room,
+  state: UndercoverInternalState,
+  reason: string
+) {
+  const activeIds = getActiveUndercoverIds(state);
+  const nextSpokenCount = state.spokenCount + 1;
+
+  state.skipVote = undefined;
+  state.reason = reason;
+
+  if (nextSpokenCount >= activeIds.length) {
+    state.stage = "voting";
+    state.currentSpeakerId = undefined;
+    state.spokenCount = activeIds.length;
+    state.votes = {};
+    state.turnEndsAt = Date.now() + GAME_STEP_MS;
+    return;
+  }
+
+  state.spokenCount = nextSpokenCount;
+  state.speakerCursor = nextActiveSpeakerCursor(state);
+  state.currentSpeakerId = state.order[state.speakerCursor];
+  state.turnEndsAt = Date.now() + GAME_STEP_MS;
+}
+
 function resolveUndercoverVote(room: Room, state: UndercoverInternalState) {
+  state.skipVote = undefined;
   const tally = new Map<string, number>();
   Object.values(state.votes).forEach((targetId) => {
     tally.set(targetId, (tally.get(targetId) || 0) + 1);
@@ -722,6 +843,7 @@ function endUndercoverGame(
   state.stage = "ended";
   state.currentSpeakerId = undefined;
   state.turnEndsAt = undefined;
+  state.skipVote = undefined;
   state.winnerTeam = winnerTeam;
   state.reason = reason;
   state.winnerIds = Object.entries(state.assignments)
@@ -746,7 +868,7 @@ function applyGomokuAction(
   if (payload.type !== "gomoku:place") return "这个操作不属于五子棋。";
   if (state.winnerId || state.isDraw) return "本局已经结束。";
   if (isGomokuTurnExpired(state)) {
-    resolveGomokuTimeout(room, state, state.currentPlayerId);
+    startGomokuSkipVote(room, state);
     return null;
   }
   if (player.id !== state.currentPlayerId) return "还没轮到你。";
@@ -764,6 +886,9 @@ function applyGomokuAction(
   if (!stone) return "你不是本局五子棋玩家。";
 
   state.board[y][x] = stone;
+  state.skipVote = undefined;
+  state.timeoutLoserId = undefined;
+  state.resultReason = undefined;
   state.moves += 1;
   const winningLine = findWinningLine(state.board, x, y, stone);
   if (winningLine) {
@@ -810,7 +935,7 @@ function isGomokuTurnExpired(state: GomokuPublicState) {
 function scheduleGameStepTimer(room: Room) {
   clearGameStepTimer(room.code);
   const state = room.gameState;
-  if (room.phase !== "playing" || !state || !state.turnEndsAt) {
+  if (room.phase !== "playing" || !state || state.skipVote || !state.turnEndsAt) {
     return;
   }
 
@@ -853,7 +978,7 @@ function scheduleGameStepTimer(room: Room) {
       ) {
         return;
       }
-      resolveGomokuTimeout(currentRoom, currentState, expectedPlayerId);
+      startGomokuSkipVote(currentRoom, currentState);
     } else if (currentState.type === "undercover") {
       if (
         currentState.stage !== expectedStage ||
@@ -871,7 +996,7 @@ function scheduleGameStepTimer(room: Room) {
       ) {
         return;
       }
-      resolveLudoTimeout(currentRoom, currentState, expectedPlayerId);
+      startLudoSkipVote(currentRoom, currentState);
     }
 
     void snapshotRoom(currentRoom);
@@ -887,27 +1012,37 @@ function clearGameStepTimer(roomCode: string) {
   gameStepTimers.delete(roomCode);
 }
 
-function resolveGomokuTimeout(
+function startGomokuSkipVote(room: Room, state: GomokuPublicState) {
+  const target = room.players.find((player) => player.id === state.currentPlayerId);
+  startSkipVote(
+    room,
+    state,
+    state.currentPlayerId,
+    Object.keys(state.playerStones).filter(
+      (playerId) => playerId !== state.currentPlayerId
+    ),
+    `${target?.name || "当前玩家"} 超过 2 分钟未确认落子，请大家投票是否跳过。`
+  );
+}
+
+function skipGomokuTurn(
   room: Room,
   state: GomokuPublicState,
-  loserId?: string
+  targetPlayerId: string,
+  reason: string
 ) {
-  if (!loserId || state.winnerId || state.isDraw) return;
-  const winner = room.players.find(
-    (entry) => entry.id !== loserId && state.playerStones[entry.id]
-  );
+  if (state.currentPlayerId !== targetPlayerId || state.winnerId || state.isDraw) {
+    return;
+  }
 
-  state.timeoutLoserId = loserId;
-  state.winnerId = winner?.id;
-  state.currentPlayerId = undefined;
-  state.turnEndsAt = undefined;
-  state.resultReason = winner
-    ? "超过 2 分钟未确认落子，超时判负。"
-    : "超过 2 分钟未确认落子，本局结束。";
-  room.phase = "ended";
-  clearGameStepTimer(room.code);
-  emitSystemMessage(room, state.resultReason);
-  void recordGameResult(room, winner ? [winner.id] : [], !winner);
+  const nextPlayer = room.players.find(
+    (entry) => entry.id !== targetPlayerId && state.playerStones[entry.id]
+  );
+  state.skipVote = undefined;
+  state.timeoutLoserId = targetPlayerId;
+  state.resultReason = reason;
+  state.currentPlayerId = nextPlayer?.id;
+  state.turnEndsAt = state.currentPlayerId ? Date.now() + GAME_STEP_MS : undefined;
 }
 
 function applyLudoAction(
@@ -919,12 +1054,15 @@ function applyLudoAction(
   if (payload.type !== "ludo:roll") return "这个操作不属于飞行棋。";
   if (state.winnerId) return "本局已经结束。";
   if (isLudoTurnExpired(state)) {
-    resolveLudoTimeout(room, state, state.currentPlayerId);
+    startLudoSkipVote(room, state);
     return null;
   }
   if (state.currentPlayerId !== player.id) return "还没轮到你。";
 
   const value = randomInt(6) + 1;
+  state.skipVote = undefined;
+  state.timeoutLoserId = undefined;
+  state.resultReason = undefined;
   state.lastRoll = { playerId: player.id, value };
   state.positions[player.id] = Math.min(
     state.finish,
@@ -958,27 +1096,31 @@ function isLudoTurnExpired(state: LudoInternalState) {
   );
 }
 
-function resolveLudoTimeout(
-  room: Room,
-  state: LudoInternalState,
-  loserId?: string
-) {
-  if (!loserId || state.winnerId) return;
-  const winner = room.players.find(
-    (entry) => entry.id !== loserId && Object.hasOwn(state.positions, entry.id)
+function startLudoSkipVote(room: Room, state: LudoInternalState) {
+  const target = room.players.find((player) => player.id === state.currentPlayerId);
+  startSkipVote(
+    room,
+    state,
+    state.currentPlayerId,
+    state.order.filter((playerId) => playerId !== state.currentPlayerId),
+    `${target?.name || "当前玩家"} 超过 2 分钟未掷骰，请大家投票是否跳过。`
   );
+}
 
-  state.timeoutLoserId = loserId;
-  state.winnerId = winner?.id;
-  state.currentPlayerId = undefined;
-  state.turnEndsAt = undefined;
-  state.resultReason = winner
-    ? "超过 2 分钟未掷骰，超时判负。"
-    : "超过 2 分钟未掷骰，本局结束。";
-  room.phase = "ended";
-  clearGameStepTimer(room.code);
-  emitSystemMessage(room, state.resultReason);
-  void recordGameResult(room, winner ? [winner.id] : [], !winner);
+function skipLudoTurn(
+  state: LudoInternalState,
+  targetPlayerId: string,
+  reason: string
+) {
+  if (state.currentPlayerId !== targetPlayerId || state.winnerId) return;
+
+  state.skipVote = undefined;
+  state.timeoutLoserId = targetPlayerId;
+  state.resultReason = reason;
+  state.turnIndex = (state.turnIndex + 1) % state.order.length;
+  state.currentPlayerId = state.order[state.turnIndex];
+  state.turnEndsAt = Date.now() + GAME_STEP_MS;
+  state.turnCount += 1;
 }
 
 function roomViewFor(room: Room, viewerId: string): RoomView {

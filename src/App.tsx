@@ -39,6 +39,7 @@ import {
   Player,
   PublicGameState,
   RoomView,
+  SkipVoteState,
   UndercoverPublicState
 } from "../shared/types";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
@@ -712,7 +713,8 @@ function UndercoverGame({
   );
   const isEliminated = state.eliminatedIds.includes(playerId);
   const canAdvance =
-    room.hostId === playerId || state.currentSpeakerId === playerId;
+    !state.skipVote &&
+    (room.hostId === playerId || state.currentSpeakerId === playerId);
   const voteCounts = Object.values(state.votes).reduce<Record<string, number>>(
     (counts, targetId) => {
       counts[targetId] = (counts[targetId] || 0) + 1;
@@ -748,7 +750,7 @@ function UndercoverGame({
 
       {state.reason && <p className="result-line">{state.reason}</p>}
 
-      {state.stage !== "ended" && (
+      {state.stage !== "ended" && !state.skipVote && (
         <div className="turn-confirm-panel">
           <div className="timer-card">
             <span>本步剩余</span>
@@ -767,6 +769,15 @@ function UndercoverGame({
             </span>
           </div>
         </div>
+      )}
+
+      {state.skipVote && (
+        <SkipVotePanel
+          room={room}
+          playerId={playerId}
+          socket={socket}
+          skipVote={state.skipVote}
+        />
       )}
 
       {state.stage === "speaking" && (
@@ -793,7 +804,7 @@ function UndercoverGame({
             <button
               key={player.id}
               className={state.votes[playerId] === player.id ? "vote selected" : "vote"}
-              disabled={isEliminated || Boolean(state.votes[playerId])}
+              disabled={isEliminated || Boolean(state.votes[playerId]) || Boolean(state.skipVote)}
               onClick={() =>
                 socket.emit("game:action", {
                   type: "undercover:vote",
@@ -866,7 +877,12 @@ function GomokuGame({
   );
   const myStone = state.playerStones[playerId];
   const isMyTurn = state.currentPlayerId === playerId;
-  const canSelectMove = isMyTurn && !state.winnerId && !state.isDraw && Boolean(myStone);
+  const canSelectMove =
+    isMyTurn &&
+    !state.skipVote &&
+    !state.winnerId &&
+    !state.isDraw &&
+    Boolean(myStone);
   const timeLeftMs = useCountdown(state.turnEndsAt);
   const timePercent = state.turnDurationMs
     ? Math.max(0, Math.min(100, (timeLeftMs / state.turnDurationMs) * 100))
@@ -905,6 +921,16 @@ function GomokuGame({
         </span>
       </div>
 
+      {state.skipVote && (
+        <SkipVotePanel
+          room={room}
+          playerId={playerId}
+          socket={socket}
+          skipVote={state.skipVote}
+        />
+      )}
+
+      {!state.skipVote && (
       <div className="turn-confirm-panel">
         <div className="timer-card">
           <span>本手剩余</span>
@@ -935,6 +961,7 @@ function GomokuGame({
           </button>
         </div>
       </div>
+      )}
 
       <div className="stone-legend">
         {room.players.slice(0, 2).map((player) => (
@@ -1017,7 +1044,16 @@ function LudoGame({
         </span>
       </div>
 
-      {!winner && (
+      {state.skipVote && (
+        <SkipVotePanel
+          room={room}
+          playerId={playerId}
+          socket={socket}
+          skipVote={state.skipVote}
+        />
+      )}
+
+      {!winner && !state.skipVote && (
         <div className="turn-confirm-panel">
           <div className="timer-card">
             <span>本步剩余</span>
@@ -1041,7 +1077,11 @@ function LudoGame({
       <div className="dice-panel">
         <button
           className="primary-action"
-          disabled={state.currentPlayerId !== playerId || Boolean(state.winnerId)}
+          disabled={
+            state.currentPlayerId !== playerId ||
+            Boolean(state.winnerId) ||
+            Boolean(state.skipVote)
+          }
           onClick={() => socket.emit("game:action", { type: "ludo:roll" })}
         >
           <Dice6 size={20} />
@@ -1194,6 +1234,58 @@ function PlayerRow({ player, isMe }: { player: Player; isMe: boolean }) {
         </small>
       </div>
       {player.isHost ? <Crown size={18} /> : player.ready ? <Check size={18} /> : <CircleDot size={18} />}
+    </div>
+  );
+}
+
+function SkipVotePanel({
+  room,
+  playerId,
+  socket,
+  skipVote
+}: {
+  room: RoomView;
+  playerId: string;
+  socket: Socket;
+  skipVote: SkipVoteState;
+}) {
+  const target = room.players.find((player) => player.id === skipVote.targetPlayerId);
+  const yesCount = Object.values(skipVote.votes).filter((vote) => vote === "yes").length;
+  const noCount = Object.values(skipVote.votes).filter((vote) => vote === "no").length;
+  const requiredCount = skipVote.eligiblePlayerIds.length;
+  const myVote = skipVote.votes[playerId];
+  const canVote = skipVote.eligiblePlayerIds.includes(playerId) && !myVote;
+
+  return (
+    <div className="skip-vote-panel">
+      <div>
+        <span className="panel-kicker">超时投票</span>
+        <strong>是否跳过 {target?.name || "当前玩家"}？</strong>
+        <p>需要其他在场玩家全部同意；有人不同意，就给当前玩家重新 2 分钟。</p>
+        <small>
+          已同意 {yesCount}/{requiredCount}
+          {noCount > 0 ? `，不同意 ${noCount}` : ""}
+          {myVote ? `，你已选择${myVote === "yes" ? "同意" : "不同意"}` : ""}
+        </small>
+      </div>
+      <div className="skip-vote-actions">
+        <button
+          className="primary-action"
+          disabled={!canVote}
+          onClick={() => socket.emit("game:action", { type: "skip:vote", vote: "yes" })}
+        >
+          <Check size={18} />
+          同意跳过
+        </button>
+        <button
+          className="secondary-action"
+          disabled={!canVote}
+          onClick={() => socket.emit("game:action", { type: "skip:vote", vote: "no" })}
+        >
+          <RefreshCw size={18} />
+          不同意
+        </button>
+      </div>
     </div>
   );
 }

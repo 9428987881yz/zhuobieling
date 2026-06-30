@@ -901,6 +901,48 @@ button:disabled {
   margin-top: 0;
 }
 
+.skip-vote-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 16px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+}
+
+.skip-vote-panel strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--brand-ink);
+  font-size: 1.15rem;
+}
+
+.skip-vote-panel p {
+  margin: 6px 0;
+  color: #526173;
+  line-height: 1.5;
+}
+
+.skip-vote-panel small {
+  color: #9a3412;
+  font-weight: 900;
+}
+
+.skip-vote-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(118px, 1fr));
+  gap: 10px;
+}
+
+.skip-vote-actions .primary-action,
+.skip-vote-actions .secondary-action {
+  width: auto;
+  margin-top: 0;
+  white-space: nowrap;
+}
+
 .gomoku-board {
   --board-size: 15;
   position: relative;
@@ -1157,6 +1199,16 @@ button:disabled {
 
   .turn-confirm-panel {
     grid-template-columns: 1fr;
+  }
+
+  .skip-vote-panel,
+  .skip-vote-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .skip-vote-actions .primary-action,
+  .skip-vote-actions .secondary-action {
+    width: 100%;
   }
 
   .move-confirm-card .primary-action {

@@ -55,6 +55,15 @@ export const GAME_META: Record<GameType, GameMeta> = {
 
 export type UndercoverStage = "speaking" | "voting" | "ended";
 
+export type SkipVoteChoice = "yes" | "no";
+
+export type SkipVoteState = {
+  targetPlayerId: string;
+  eligiblePlayerIds: string[];
+  votes: Record<string, SkipVoteChoice>;
+  createdAt: number;
+};
+
 export type UndercoverPublicState = {
   type: "undercover";
   stage: UndercoverStage;
@@ -62,6 +71,7 @@ export type UndercoverPublicState = {
   currentSpeakerId?: string;
   turnDurationMs: number;
   turnEndsAt?: number;
+  skipVote?: SkipVoteState;
   spokenCount: number;
   myWord?: string;
   myRole?: "civilian" | "undercover";
@@ -83,6 +93,7 @@ export type GomokuPublicState = {
   currentPlayerId?: string;
   turnDurationMs: number;
   turnEndsAt?: number;
+  skipVote?: SkipVoteState;
   playerStones: Record<string, GomokuStone>;
   winnerId?: string;
   winningLine?: Array<[number, number]>;
@@ -99,6 +110,7 @@ export type LudoPublicState = {
   currentPlayerId?: string;
   turnDurationMs: number;
   turnEndsAt?: number;
+  skipVote?: SkipVoteState;
   lastRoll?: {
     playerId: string;
     value: number;
@@ -161,4 +173,5 @@ export type GameActionPayload =
   | { type: "undercover:next-speaker" }
   | { type: "undercover:vote"; targetId: string }
   | { type: "gomoku:place"; x: number; y: number }
-  | { type: "ludo:roll" };
+  | { type: "ludo:roll" }
+  | { type: "skip:vote"; vote: SkipVoteChoice };
