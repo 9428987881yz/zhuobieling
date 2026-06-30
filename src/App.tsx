@@ -7,6 +7,7 @@ import {
   useState
 } from "react";
 import {
+  ArrowLeft,
   Check,
   CircleDot,
   Copy,
@@ -16,13 +17,13 @@ import {
   Eye,
   EyeOff,
   Gamepad2,
+  Info,
   KeyRound,
   LogOut,
   Play,
   QrCode,
   RefreshCw,
   Send,
-  Sparkles,
   UserPlus,
   Users,
   Wifi,
@@ -60,6 +61,68 @@ type GameRecord = {
   player_name: string;
   room_code: string;
   created_at: string;
+};
+
+type GameCategory = {
+  title: string;
+  description: string;
+  games: GameType[];
+};
+
+type GameDetail = {
+  category: string;
+  intro: string;
+  highlights: string[];
+};
+
+const gameCategories: GameCategory[] = [
+  {
+    title: "推理派对",
+    description: "适合朋友边聊边判断，节奏轻松，人数越多越热闹。",
+    games: ["undercover"]
+  },
+  {
+    title: "棋盘对弈",
+    description: "落点清晰、回合确认，适合安静思考和一对一较量。",
+    games: ["gomoku"]
+  },
+  {
+    title: "轻量竞速",
+    description: "规则简单，掷骰前进，适合快速开一局。",
+    games: ["ludo"]
+  },
+  {
+    title: "策略建设",
+    description: "采集资源、修路建村，适合喜欢规划和交易的玩家。",
+    games: ["catan"]
+  }
+];
+
+const gameDetails: Record<GameType, GameDetail> = {
+  undercover: {
+    category: "推理派对",
+    intro:
+      "每位玩家会拿到一个词语，其中少数人拿到相近但不同的词。大家轮流描述自己的词，不能直接说出答案，最后投票找出卧底。",
+    highlights: ["3-8 人开局", "轮流发言", "投票淘汰", "适合语音或文字聊天"]
+  },
+  gomoku: {
+    category: "棋盘对弈",
+    intro:
+      "黑白双方轮流落子，先在横、竖或斜线上连成五子的一方获胜。每一步先选择落点，再点确认，确认前可以修改。",
+    highlights: ["2 人对弈", "精准落点", "落子确认", "每步 2 分钟"]
+  },
+  ludo: {
+    category: "轻量竞速",
+    intro:
+      "玩家轮流掷骰，根据点数移动棋子，最先抵达终点的人获胜。首版采用简化规则，重点是快速开始和轻松游玩。",
+    highlights: ["2-4 人", "轮流掷骰", "先到终点获胜", "超时可投票跳过"]
+  },
+  catan: {
+    category: "策略建设",
+    intro:
+      "在卡坦岛上采集木材、砖、羊毛、小麦和矿石，修路、建村、升级城市，最先达到 10 分的玩家获胜。",
+    highlights: ["3-4 人", "资源采集", "修路建村", "经典核心规则"]
+  }
 };
 
 const socketUrl =
@@ -140,6 +203,9 @@ export default function App() {
     return initialInviteCode || localStorage.getItem("board-room-last-room") || "";
   });
   const [selectedGame, setSelectedGame] = useState<GameType>("undercover");
+  const [activeGame, setActiveGame] = useState<GameType | null>(() =>
+    initialInviteCode ? "undercover" : null
+  );
   const [session, setSession] = useState<Session | null>(null);
   const [profileName, setProfileName] = useState("");
   const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
@@ -429,6 +495,15 @@ export default function App() {
     localStorage.removeItem("board-room-last-room");
   }
 
+  function openGame(gameType: GameType) {
+    setSelectedGame(gameType);
+    setActiveGame(gameType);
+  }
+
+  function returnHome() {
+    setActiveGame(null);
+  }
+
   if (room) {
     return (
       <RoomScreen
@@ -443,42 +518,78 @@ export default function App() {
     );
   }
 
-  return (
-    <main className="app-shell">
-      <section className="hero-band">
-        <div className="hero-copy">
+  if (!activeGame) {
+    return (
+      <main className="app-shell home-shell">
+        <section className="home-title-band">
           <div className="brand-lockup">
             <img className="brand-mark" src={brandLogoUrl} alt="桌别零图形标识" />
             <div>
               <div className="eyebrow">
                 <Gamepad2 size={16} />
-                在线桌游从零开局
+                在线桌游
               </div>
               <h1>{BRAND_NAME}</h1>
             </div>
           </div>
-          <p>
-            注册或登录账号后创建房间，把 6 位房间号发给朋友，就能在桌别零一起开一桌。
-          </p>
-        </div>
-        <div className={socketConnected ? "status online" : "status offline"}>
-          {socketConnected ? <Wifi size={18} /> : <WifiOff size={18} />}
-          {socketConnected ? "实时服务器已连接" : "正在连接服务器"}
-        </div>
-      </section>
-
-      {notice && <NoticeBar notice={notice} />}
-
-      <section className="dashboard-grid">
-        <div className="panel command-panel">
-          <div className="panel-heading">
-            <div>
-              <span className="panel-kicker">开局</span>
-              <h2>创建房间</h2>
-            </div>
-            <Sparkles size={22} />
+          <div className={socketConnected ? "status online" : "status offline"}>
+            {socketConnected ? <Wifi size={18} /> : <WifiOff size={18} />}
+            {socketConnected ? "服务器已连接" : "连接中"}
           </div>
+        </section>
 
+        {notice && <NoticeBar notice={notice} />}
+
+        <section className="category-list">
+          {gameCategories.map((category) => (
+            <div className="game-category" key={category.title}>
+              <div className="category-heading">
+                <span className="panel-kicker">游戏类别</span>
+                <h2>{category.title}</h2>
+                <p>{category.description}</p>
+              </div>
+              <div className="category-games">
+                {category.games.map((type) => (
+                  <button
+                    className="home-game-card"
+                    key={type}
+                    onClick={() => openGame(type)}
+                    type="button"
+                  >
+                    <GameGlyph type={type} />
+                    <span>{GAME_META[type].name}</span>
+                    <small>{GAME_META[type].shortDescription}</small>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </section>
+      </main>
+    );
+  }
+
+  const gameMeta = GAME_META[selectedGame];
+  const gameDetail = gameDetails[selectedGame];
+
+  return (
+    <main className="app-shell game-detail-shell">
+      <button className="icon-text-button back-button" type="button" onClick={returnHome}>
+        <ArrowLeft size={18} />
+        返回首页
+      </button>
+
+      <section className="game-detail-hero">
+        <div className="game-detail-title">
+          <GameGlyph type={selectedGame} large />
+          <div>
+            <span className="panel-kicker">{gameDetail.category}</span>
+            <h1>{gameMeta.name}</h1>
+            <p>{gameMeta.shortDescription}</p>
+          </div>
+        </div>
+
+        <div className="create-room-box">
           <label className="field">
             <span>你的昵称</span>
             <input
@@ -491,13 +602,38 @@ export default function App() {
               placeholder="例如：小明"
             />
           </label>
-
-          <GamePicker selected={selectedGame} onSelect={setSelectedGame} />
-
           <button className="primary-action" onClick={createRoom}>
             <DoorOpen size={20} />
-            {canEnterRooms ? "创建新房间" : "请先注册/登录"}
+            {canEnterRooms ? "创建房间" : "请先注册/登录"}
           </button>
+        </div>
+      </section>
+
+      {notice && <NoticeBar notice={notice} />}
+
+      <section className="game-detail-grid">
+        <div className="panel intro-panel">
+          <div className="panel-heading">
+            <div>
+              <span className="panel-kicker">游戏简介</span>
+              <h2>{gameMeta.name}</h2>
+            </div>
+            <Info size={22} />
+          </div>
+          <p>{gameDetail.intro}</p>
+          <div className="rule-strip detail-rules">
+            <span>
+              {gameMeta.minPlayers}-{gameMeta.maxPlayers} 人
+            </span>
+            <span>每步 2 分钟</span>
+            <span>超时可投票跳过</span>
+            <span>注册后游玩</span>
+          </div>
+          <div className="highlight-grid">
+            {gameDetail.highlights.map((highlight) => (
+              <span key={highlight}>{highlight}</span>
+            ))}
+          </div>
         </div>
 
         <div className="panel command-panel">
@@ -1325,6 +1461,20 @@ function GameGlyph({ type, large = false }: { type: GameType; large?: boolean })
         <span />
         <Dice6 size={large ? 34 : 22} />
         <span />
+      </div>
+    );
+  }
+
+  if (type === "catan") {
+    return (
+      <div className={large ? "glyph catan large" : "glyph catan"}>
+        <span />
+        <span />
+        <span />
+        <span />
+        <span />
+        <span />
+        <strong>10</strong>
       </div>
     );
   }
