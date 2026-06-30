@@ -9,9 +9,12 @@ import {
 } from "react";
 import {
   ArrowLeft,
+  Bell,
   Check,
+  ChevronRight,
   Clock3,
   CircleDot,
+  Compass,
   Copy,
   Crown,
   Dice6,
@@ -22,14 +25,19 @@ import {
   Gamepad2,
   Info,
   KeyRound,
+  ListFilter,
   LogOut,
   Medal,
+  MessageSquare,
+  MousePointer2,
   Play,
   QrCode,
   RefreshCw,
+  Search,
   Send,
   ShieldCheck,
   Sparkles,
+  Star,
   Table2,
   Timer,
   Trophy,
@@ -38,7 +46,8 @@ import {
   Users,
   Wifi,
   WifiOff,
-  X
+  X,
+  Zap
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { io, Socket } from "socket.io-client";
@@ -106,6 +115,20 @@ type GameDetail = {
   online: number;
 };
 
+type LobbyTable = {
+  game: GameType;
+  title: string;
+  seats: string;
+  pace: string;
+  note: string;
+};
+
+type LobbyFeature = {
+  icon: ReactNode;
+  title: string;
+  text: string;
+};
+
 const gameCategories: GameCategory[] = [
   {
     title: "推理派对",
@@ -168,6 +191,48 @@ const totalOnlinePlayers = Object.values(gameDetails).reduce(
   (total, detail) => total + detail.online,
   0
 );
+
+const lobbyTables: LobbyTable[] = [
+  {
+    game: "undercover",
+    title: "朋友推理桌",
+    seats: "3-8 人",
+    pace: "轻松",
+    note: "适合边聊边判断身份"
+  },
+  {
+    game: "gomoku",
+    title: "快速对弈桌",
+    seats: "2 人",
+    pace: "紧凑",
+    note: "落点确认后再同步"
+  },
+  {
+    game: "catan",
+    title: "经典策略桌",
+    seats: "3-4 人",
+    pace: "中速",
+    note: "采集、交易、建村到 10 分"
+  }
+];
+
+const lobbyFeatures: LobbyFeature[] = [
+  {
+    icon: <MousePointer2 size={19} />,
+    title: "浏览器即开局",
+    text: "朋友打开链接、登录账号、输入房间号就能加入。"
+  },
+  {
+    icon: <ShieldCheck size={19} />,
+    title: "账号后游玩",
+    text: "注册后保存昵称、头像、荣誉介绍和战绩。"
+  },
+  {
+    icon: <MessageSquare size={19} />,
+    title: "房间内沟通",
+    text: "先用文字聊天，后续可以继续扩展语音。"
+  }
+];
 
 const socketUrl =
   import.meta.env.VITE_SOCKET_URL ||
@@ -799,18 +864,29 @@ export default function App() {
     return (
       <>
         <main className="app-shell home-shell">
-          <section className="home-title-band">
-            <div className="brand-lockup">
-              <img className="brand-mark" src={brandLogoUrl} alt="桌别零图形标识" />
-              <div>
-                <div className="eyebrow">
-                  <Gamepad2 size={16} />
-                  在线桌游从这里开局
-                </div>
-                <h1>{BRAND_NAME}</h1>
-                <p>注册后选择游戏、创建房间、分享 6 位房间号，朋友就能在浏览器里一起开一桌。</p>
-              </div>
-            </div>
+          <header className="home-nav" id="top">
+            <a className="home-nav-brand" href="#top" aria-label="返回桌别零首页">
+              <img src={brandLogoUrl} alt="" />
+              <strong>{BRAND_NAME}</strong>
+            </a>
+            <nav className="home-nav-links" aria-label="大厅导航">
+              <a href="#play">
+                <Compass size={17} />
+                开始游戏
+              </a>
+              <a href="#games">
+                <ListFilter size={17} />
+                游戏列表
+              </a>
+              <a href="#tables">
+                <MessageSquare size={17} />
+                推荐桌型
+              </a>
+              <a href="#news">
+                <Bell size={17} />
+                公告
+              </a>
+            </nav>
             <div className="home-header-actions">
               <div className={socketConnected ? "status online" : "status offline"}>
                 {socketConnected ? <Wifi size={18} /> : <WifiOff size={18} />}
@@ -835,6 +911,38 @@ export default function App() {
                 }}
               />
             </div>
+          </header>
+
+          <section className="home-title-band" id="play">
+            <div className="brand-lockup">
+              <img className="brand-mark" src={brandLogoUrl} alt="桌别零图形标识" />
+              <div>
+                <div className="eyebrow">
+                  <Gamepad2 size={16} />
+                  在线桌游从这里开局
+                </div>
+                <h1>{BRAND_NAME}</h1>
+                <p>注册后选择游戏、创建房间、分享 6 位房间号，朋友就能在浏览器里一起开一桌。</p>
+              </div>
+            </div>
+            <aside className="home-play-panel" aria-label="快速开始">
+              <div className="play-panel-head">
+                <span className="panel-kicker">
+                  <Star size={16} />
+                  推荐开局
+                </span>
+                <strong>先从热门桌开始</strong>
+                <small>新玩家建议从谁是卧底或五子棋开始，规则短、等待少。</small>
+              </div>
+              <button className="primary-action hero-action" type="button" onClick={() => openGame("undercover")}>
+                <Play size={19} />
+                立即选游戏
+              </button>
+              <a className="hero-link-action" href="#games">
+                查看全部游戏
+                <ChevronRight size={18} />
+              </a>
+            </aside>
           </section>
 
           <section className="home-metrics" aria-label="平台概况">
@@ -856,6 +964,74 @@ export default function App() {
           </section>
 
           {notice && <NoticeBar notice={notice} />}
+
+          <section className="home-lobby-grid">
+            <div className="lobby-board" id="tables">
+              <div className="lobby-board-head">
+                <div>
+                  <span className="panel-kicker">大厅桌型</span>
+                  <h2>选择一种开局方式</h2>
+                </div>
+                <Zap size={24} />
+              </div>
+              <div className="table-list">
+                {lobbyTables.map((table) => (
+                  <button
+                    className="table-row"
+                    key={`${table.game}-${table.title}`}
+                    onClick={() => openGame(table.game)}
+                    type="button"
+                  >
+                    <GameGlyph type={table.game} />
+                    <div>
+                      <strong>{table.title}</strong>
+                      <small>{table.note}</small>
+                    </div>
+                    <span>{table.seats}</span>
+                    <span>{table.pace}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="lobby-board" id="news">
+              <div className="lobby-board-head">
+                <div>
+                  <span className="panel-kicker">平台公告</span>
+                  <h2>桌别零正在完善</h2>
+                </div>
+                <Info size={24} />
+              </div>
+              <div className="feature-stack">
+                {lobbyFeatures.map((feature) => (
+                  <div className="feature-row" key={feature.title}>
+                    <span>{feature.icon}</span>
+                    <div>
+                      <strong>{feature.title}</strong>
+                      <small>{feature.text}</small>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          <section className="game-library-toolbar" id="games">
+            <div>
+              <span className="panel-kicker">游戏库</span>
+              <h2>按类别找游戏</h2>
+            </div>
+            <div className="library-tools" aria-label="游戏筛选">
+              <span>
+                <Search size={17} />
+                当前收录 {Object.keys(GAME_META).length} 款
+              </span>
+              <span>
+                <Timer size={17} />
+                全站每步 2 分钟
+              </span>
+            </div>
+          </section>
 
           <section className="category-list">
             {gameCategories.map((category) => (
@@ -887,6 +1063,10 @@ export default function App() {
                           </span>
                           <span>{gameDetails[type].online} 在线</span>
                         </div>
+                        <span className="home-game-cta">
+                          进入游戏
+                          <ChevronRight size={16} />
+                        </span>
                       </div>
                     </button>
                   ))}
