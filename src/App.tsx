@@ -1,6 +1,7 @@
 import {
   CSSProperties,
   FormEvent,
+  ReactNode,
   useEffect,
   useMemo,
   useRef,
@@ -225,10 +226,9 @@ export default function App() {
     return initialInviteCode || localStorage.getItem("board-room-last-room") || "";
   });
   const [selectedGame, setSelectedGame] = useState<GameType>("undercover");
-  const [activeGame, setActiveGame] = useState<GameType | null>(() =>
-    initialInviteCode ? "undercover" : null
-  );
+  const [activeGame, setActiveGame] = useState<GameType | null>(null);
   const [session, setSession] = useState<Session | null>(null);
+  const [authReady, setAuthReady] = useState(!supabase);
   const [profileName, setProfileName] = useState("");
   const [profileAvatarUrl, setProfileAvatarUrl] = useState("");
   const [profileHonorText, setProfileHonorText] = useState("");
@@ -244,6 +244,7 @@ export default function App() {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [accountPanelView, setAccountPanelView] = useState<AccountPanelView>(null);
   const [authDialogOpen, setAuthDialogOpen] = useState(false);
+  const inviteLoginPromptedRef = useRef(false);
 
   const socket = useMemo(
     () =>
@@ -254,7 +255,6 @@ export default function App() {
   );
 
   const displayName = (profileName || guestName || "新玩家").trim();
-  const nicknameInputValue = session?.user ? profileName : guestName;
   const authToken = session?.access_token;
   const canEnterRooms = Boolean(authToken && session?.user);
   const authProfile = session?.user
@@ -351,6 +351,7 @@ export default function App() {
       if (data.session?.user) {
         void loadProfile(data.session.user.id, data.session.access_token);
       }
+      setAuthReady(true);
     });
 
     const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
@@ -380,6 +381,31 @@ export default function App() {
     localStorage.removeItem("board-room-last-room");
     setNotice({ tone: "info", text: "已退出登录，请重新登录后再进入房间。" });
   }, [room, session?.user, socket]);
+
+  useEffect(() => {
+    if (
+      !initialInviteCode ||
+      !authReady ||
+      authToken ||
+      inviteLoginPromptedRef.current
+    ) {
+      return;
+    }
+
+    inviteLoginPromptedRef.current = true;
+    openAuthDialog("signin");
+    setNotice({
+      tone: "info",
+      text: `请先登录或注册账号后再加入房间 ${initialInviteCode}。`
+    });
+  }, [authReady, authToken]);
+
+  useEffect(() => {
+    if (!authReady || !activeGame || session?.user) return;
+    setActiveGame(null);
+    openAuthDialog("signin");
+    setNotice({ tone: "info", text: "请先登录或注册账号后再进入游戏页面。" });
+  }, [activeGame, authReady, session?.user]);
 
   async function loadProfile(userId: string, token?: string) {
     if (!supabase) return;
@@ -639,6 +665,12 @@ export default function App() {
   }
 
   function openGame(gameType: GameType) {
+    if (!authToken || !session?.user) {
+      openAuthDialog("signin");
+      setNotice({ tone: "info", text: "请先登录或注册账号后再进入游戏页面。" });
+      return;
+    }
+
     setSelectedGame(gameType);
     setActiveGame(gameType);
     setAccountMenuOpen(false);
@@ -660,20 +692,6 @@ export default function App() {
     if (mode === "signin") {
       setSignupCode("");
     }
-  }
-
-  if (room) {
-    return (
-      <RoomScreen
-        room={room}
-        playerId={playerId}
-        socket={socket}
-        onLeave={leaveRoom}
-        onNotice={setNotice}
-        socketConnected={socketConnected}
-        notice={notice}
-      />
-    );
   }
 
   if (accountPanelView) {
@@ -718,6 +736,40 @@ export default function App() {
         onSignupCodeChange={setSignupCode}
         onRequestSignupCode={requestSignupCode}
         onAuthSubmit={handleAuth}
+      />
+    );
+  }
+
+  if (room) {
+    return (
+      <RoomScreen
+        room={room}
+        playerId={playerId}
+        socket={socket}
+        onLeave={leaveRoom}
+        onNotice={setNotice}
+        socketConnected={socketConnected}
+        notice={notice}
+        accountMenu={
+          <HomeAccountMenu
+            displayName={displayName}
+            avatarUrl={profileAvatarUrl}
+            email={session?.user.email || ""}
+            isSignedIn={Boolean(session?.user)}
+            menuOpen={accountMenuOpen}
+            onToggle={() => setAccountMenuOpen((open) => !open)}
+            onAuthOpen={openAuthDialog}
+            onSelect={(view) => {
+              setAccountPanelView(view);
+              setAccountMenuOpen(false);
+            }}
+            onSignOut={() => {
+              setAccountMenuOpen(false);
+              setAccountPanelView(null);
+              void supabase?.auth.signOut();
+            }}
+          />
+        }
       />
     );
   }
@@ -820,10 +872,30 @@ export default function App() {
 
   return (
     <main className="app-shell game-detail-shell">
-      <button className="icon-text-button back-button" type="button" onClick={returnHome}>
-        <ArrowLeft size={18} />
-        返回首页
-      </button>
+      <div className="page-topbar">
+        <button className="icon-text-button back-button" type="button" onClick={returnHome}>
+          <ArrowLeft size={18} />
+          返回首页
+        </button>
+        <HomeAccountMenu
+          displayName={displayName}
+          avatarUrl={profileAvatarUrl}
+          email={session?.user.email || ""}
+          isSignedIn={Boolean(session?.user)}
+          menuOpen={accountMenuOpen}
+          onToggle={() => setAccountMenuOpen((open) => !open)}
+          onAuthOpen={openAuthDialog}
+          onSelect={(view) => {
+            setAccountPanelView(view);
+            setAccountMenuOpen(false);
+          }}
+          onSignOut={() => {
+            setAccountMenuOpen(false);
+            setAccountPanelView(null);
+            void supabase?.auth.signOut();
+          }}
+        />
+      </div>
 
       <section className="game-detail-hero">
         <div className="game-detail-title">
@@ -836,18 +908,15 @@ export default function App() {
         </div>
 
         <div className="create-room-box">
-          <label className="field">
-            <span>你的昵称</span>
-            <input
-              value={nicknameInputValue}
-              maxLength={18}
-              onChange={(event) => {
-                setGuestName(event.target.value);
-                if (session?.user) setProfileName(event.target.value);
-              }}
-              placeholder="例如：小明"
-            />
-          </label>
+          <div className="current-player-card">
+            <span className="current-player-avatar">
+              <AvatarFigure avatarUrl={profileAvatarUrl} fallback={initialOf(displayName)} />
+            </span>
+            <div>
+              <span>当前账号</span>
+              <strong>{displayName || "新玩家"}</strong>
+            </div>
+          </div>
           <button className="primary-action" onClick={createRoom}>
             <DoorOpen size={20} />
             {canEnterRooms ? "创建房间" : "请先注册/登录"}
@@ -908,56 +977,6 @@ export default function App() {
             </button>
           </form>
         </div>
-
-        <div className="panel account-panel">
-          <div className="panel-heading">
-            <div>
-              <span className="panel-kicker">账号</span>
-              <h2>{session ? "个人资料" : "注册后游玩"}</h2>
-            </div>
-            <KeyRound size={22} />
-          </div>
-
-          {session ? (
-            <ProfilePanel
-              name={profileName}
-              avatarUrl={profileAvatarUrl}
-              honorText={profileHonorText}
-              email={session.user.email || ""}
-              records={records}
-              onNameChange={setProfileName}
-              onAvatarChange={setProfileAvatarUrl}
-              onHonorTextChange={setProfileHonorText}
-              onSave={() =>
-                void upsertProfile(
-                  session.user.id,
-                  profileName,
-                  profileAvatarUrl,
-                  profileHonorText
-                )
-              }
-              onSignOut={() => void supabase?.auth.signOut()}
-            />
-          ) : (
-            <AuthPanel
-              configured={isSupabaseConfigured}
-              mode={authMode}
-              email={email}
-              password={password}
-              signupCode={signupCode}
-              signupCodeSent={signupCodeSent}
-              signupCodeCooldown={signupCodeCooldown}
-              sendingSignupCode={sendingSignupCode}
-              submitting={authSubmitting}
-              onModeChange={changeAuthMode}
-              onEmailChange={setEmail}
-              onPasswordChange={setPassword}
-              onSignupCodeChange={setSignupCode}
-              onRequestSignupCode={requestSignupCode}
-              onSubmit={handleAuth}
-            />
-          )}
-        </div>
       </section>
     </main>
   );
@@ -970,7 +989,8 @@ function RoomScreen({
   onLeave,
   onNotice,
   socketConnected,
-  notice
+  notice,
+  accountMenu
 }: {
   room: RoomView;
   playerId: string;
@@ -979,6 +999,7 @@ function RoomScreen({
   onNotice: (notice: Notice) => void;
   socketConnected: boolean;
   notice: Notice | null;
+  accountMenu: ReactNode;
 }) {
   const [chatText, setChatText] = useState("");
   const me = room.players.find((player) => player.id === playerId);
@@ -1029,6 +1050,7 @@ function RoomScreen({
             <LogOut size={18} />
             离开
           </button>
+          {accountMenu}
         </div>
       </header>
 

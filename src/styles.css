@@ -505,7 +505,12 @@ button:disabled {
   line-height: 1.45;
 }
 
-.back-button {
+.page-topbar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 12px;
 }
 
@@ -555,9 +560,45 @@ button:disabled {
   margin-top: 0;
 }
 
+.current-player-card {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.current-player-avatar {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  color: #fff;
+  background: var(--brand-ink);
+  border-radius: 50%;
+  font-weight: 900;
+  overflow: hidden;
+}
+
+.current-player-card span:not(.current-player-avatar) {
+  display: block;
+  color: #667589;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.current-player-card strong {
+  display: block;
+  overflow: hidden;
+  color: var(--brand-ink);
+  font-size: 1.08rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .game-detail-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.8fr) minmax(300px, 0.85fr);
+  grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.8fr);
   align-items: start;
   gap: 16px;
   margin-top: 16px;
@@ -2102,6 +2143,11 @@ button:disabled {
   .home-header-actions {
     width: 100%;
     justify-content: space-between;
+  }
+
+  .page-topbar {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .home-account-menu {
