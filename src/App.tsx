@@ -1,4 +1,5 @@
 import {
+  ChangeEvent,
   CSSProperties,
   FormEvent,
   useEffect,
@@ -17,6 +18,7 @@ import {
   Eye,
   EyeOff,
   Gamepad2,
+  ImagePlus,
   Info,
   KeyRound,
   LogOut,
@@ -25,6 +27,7 @@ import {
   RefreshCw,
   Send,
   ShieldCheck,
+  Trophy,
   UserPlus,
   UserRound,
   Users,
@@ -63,6 +66,13 @@ type GameRecord = {
   player_name: string;
   room_code: string;
   created_at: string;
+};
+
+type ProfileResponse = {
+  displayName?: string;
+  avatarUrl?: string | null;
+  honorText?: string;
+  error?: string;
 };
 
 type AccountPanelView = "details" | "security" | null;
@@ -212,6 +222,8 @@ export default function App() {
   );
   const [session, setSession] = useState<Session | null>(null);
   const [profileName, setProfileName] = useState("");
+  const [profileAvatarUrl, setProfileAvatarUrl] = useState("");
+  const [profileHonorText, setProfileHonorText] = useState("");
   const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -234,7 +246,8 @@ export default function App() {
   const authProfile = session?.user
     ? {
         userId: session.user.id,
-        name: displayName
+        name: displayName,
+        avatarUrl: profileAvatarUrl || undefined
       }
     : undefined;
 
@@ -323,6 +336,8 @@ export default function App() {
         void loadProfile(nextSession.user.id, nextSession.access_token);
       } else {
         setProfileName("");
+        setProfileAvatarUrl("");
+        setProfileHonorText("");
         setRecords([]);
       }
     });
@@ -353,10 +368,7 @@ export default function App() {
         Authorization: `Bearer ${profileToken}`
       }
     });
-    const payload = (await response.json().catch(() => ({}))) as {
-      displayName?: string;
-      error?: string;
-    };
+    const payload = (await response.json().catch(() => ({}))) as ProfileResponse;
 
     if (!response.ok) {
       setNotice({
@@ -369,6 +381,8 @@ export default function App() {
     const nextName = payload.displayName || guestName;
     setProfileName(nextName);
     setGuestName(nextName);
+    setProfileAvatarUrl(payload.avatarUrl || "");
+    setProfileHonorText(payload.honorText || "");
   }
 
   async function loadRecords(userId: string) {
@@ -413,7 +427,13 @@ export default function App() {
     }
 
     if (result.data.user) {
-      await upsertProfile(result.data.user.id, displayName, result.data.session?.access_token);
+      await upsertProfile(
+        result.data.user.id,
+        displayName,
+        profileAvatarUrl,
+        profileHonorText,
+        result.data.session?.access_token
+      );
     }
 
     setNotice({
@@ -422,7 +442,13 @@ export default function App() {
     });
   }
 
-  async function upsertProfile(userId: string, name: string, token?: string) {
+  async function upsertProfile(
+    userId: string,
+    name: string,
+    avatarUrl = profileAvatarUrl,
+    honorText = profileHonorText,
+    token?: string
+  ) {
     if (!supabase) return;
     const cleanName = name.trim() || "新玩家";
     const profileToken = token || authToken;
@@ -439,13 +465,12 @@ export default function App() {
       },
       body: JSON.stringify({
         userId,
-        displayName: cleanName
+        displayName: cleanName,
+        avatarUrl,
+        honorText
       })
     });
-    const payload = (await response.json().catch(() => ({}))) as {
-      displayName?: string;
-      error?: string;
-    };
+    const payload = (await response.json().catch(() => ({}))) as ProfileResponse;
 
     if (!response.ok) {
       setNotice({ tone: "error", text: payload.error || "保存个人资料失败。" });
@@ -454,6 +479,8 @@ export default function App() {
 
     const savedName = payload.displayName || cleanName;
     setProfileName(savedName);
+    setProfileAvatarUrl(payload.avatarUrl || "");
+    setProfileHonorText(payload.honorText || "");
     setGuestName(savedName);
     setNotice({ tone: "success", text: "个人资料已保存。" });
   }
@@ -533,6 +560,8 @@ export default function App() {
         configured={isSupabaseConfigured}
         session={session}
         displayName={session?.user ? profileName : guestName}
+        avatarUrl={profileAvatarUrl}
+        honorText={profileHonorText}
         email={email}
         password={password}
         records={records}
@@ -540,8 +569,17 @@ export default function App() {
         notice={notice}
         onClose={() => setAccountPanelView(null)}
         onNameChange={setProfileName}
+        onAvatarChange={setProfileAvatarUrl}
+        onHonorTextChange={setProfileHonorText}
+        onAvatarError={(text) => setNotice({ tone: "error", text })}
         onProfileSave={() =>
-          session?.user && void upsertProfile(session.user.id, profileName)
+          session?.user &&
+          void upsertProfile(
+            session.user.id,
+            profileName,
+            profileAvatarUrl,
+            profileHonorText
+          )
         }
         onSignOut={() => {
           setAccountPanelView(null);
@@ -576,6 +614,7 @@ export default function App() {
             </div>
             <HomeAccountMenu
               displayName={displayName}
+              avatarUrl={profileAvatarUrl}
               email={session?.user.email || ""}
               isSignedIn={Boolean(session?.user)}
               menuOpen={accountMenuOpen}
@@ -730,10 +769,22 @@ export default function App() {
           {session ? (
             <ProfilePanel
               name={profileName}
+              avatarUrl={profileAvatarUrl}
+              honorText={profileHonorText}
               email={session.user.email || ""}
               records={records}
               onNameChange={setProfileName}
-              onSave={() => void upsertProfile(session.user.id, profileName)}
+              onAvatarChange={setProfileAvatarUrl}
+              onHonorTextChange={setProfileHonorText}
+              onAvatarError={(text) => setNotice({ tone: "error", text })}
+              onSave={() =>
+                void upsertProfile(
+                  session.user.id,
+                  profileName,
+                  profileAvatarUrl,
+                  profileHonorText
+                )
+              }
               onSignOut={() => void supabase?.auth.signOut()}
             />
           ) : (
@@ -1900,6 +1951,7 @@ function SkipVotePanel({
 
 function HomeAccountMenu({
   displayName,
+  avatarUrl,
   email,
   isSignedIn,
   menuOpen,
@@ -1908,6 +1960,7 @@ function HomeAccountMenu({
   onSignOut
 }: {
   displayName: string;
+  avatarUrl: string;
   email: string;
   isSignedIn: boolean;
   menuOpen: boolean;
@@ -1923,7 +1976,9 @@ function HomeAccountMenu({
         aria-expanded={menuOpen}
         onClick={onToggle}
       >
-        {isSignedIn ? (
+        {isSignedIn && avatarUrl ? (
+          <img src={avatarUrl} alt={`${displayName || "用户"}的头像`} />
+        ) : isSignedIn ? (
           <span>{initialOf(displayName)}</span>
         ) : (
           <UserRound size={20} />
@@ -1961,6 +2016,8 @@ function AccountPage({
   configured,
   session,
   displayName,
+  avatarUrl,
+  honorText,
   email,
   password,
   records,
@@ -1968,6 +2025,9 @@ function AccountPage({
   notice,
   onClose,
   onNameChange,
+  onAvatarChange,
+  onHonorTextChange,
+  onAvatarError,
   onProfileSave,
   onSignOut,
   onAuthModeChange,
@@ -1979,6 +2039,8 @@ function AccountPage({
   configured: boolean;
   session: Session | null;
   displayName: string;
+  avatarUrl: string;
+  honorText: string;
   email: string;
   password: string;
   records: GameRecord[];
@@ -1986,6 +2048,9 @@ function AccountPage({
   notice: Notice | null;
   onClose: () => void;
   onNameChange: (value: string) => void;
+  onAvatarChange: (value: string) => void;
+  onHonorTextChange: (value: string) => void;
+  onAvatarError: (text: string) => void;
   onProfileSave: () => void;
   onSignOut: () => void;
   onAuthModeChange: (mode: "signin" | "signup") => void;
@@ -2002,7 +2067,13 @@ function AccountPage({
 
       <section className="account-page-hero">
         <div className="account-page-avatar">
-          {session ? initialOf(displayName || "新玩家") : <UserRound size={34} />}
+          {session && avatarUrl ? (
+            <img src={avatarUrl} alt={`${displayName || "用户"}的头像`} />
+          ) : session ? (
+            initialOf(displayName || "新玩家")
+          ) : (
+            <UserRound size={34} />
+          )}
         </div>
         <div>
           <span className="panel-kicker">账号中心</span>
@@ -2018,9 +2089,14 @@ function AccountPage({
           view === "details" ? (
             <ProfilePanel
               name={displayName}
+              avatarUrl={avatarUrl}
+              honorText={honorText}
               email={session.user.email || ""}
               records={records}
               onNameChange={onNameChange}
+              onAvatarChange={onAvatarChange}
+              onHonorTextChange={onHonorTextChange}
+              onAvatarError={onAvatarError}
               onSave={onProfileSave}
               onSignOut={onSignOut}
             />
@@ -2136,33 +2212,108 @@ function AuthPanel({
 
 function ProfilePanel({
   name,
+  avatarUrl,
+  honorText,
   email,
   records,
   onNameChange,
+  onAvatarChange,
+  onHonorTextChange,
+  onAvatarError,
   onSave,
   onSignOut
 }: {
   name: string;
+  avatarUrl: string;
+  honorText: string;
   email: string;
   records: GameRecord[];
   onNameChange: (value: string) => void;
+  onAvatarChange: (value: string) => void;
+  onHonorTextChange: (value: string) => void;
+  onAvatarError: (text: string) => void;
   onSave: () => void;
   onSignOut: () => void;
 }) {
+  const totalGames = records.length;
+  const wins = records.filter((record) => record.result === "win").length;
+  const draws = records.filter((record) => record.result === "draw").length;
+  const winRate = totalGames ? Math.round((wins / totalGames) * 100) : 0;
+
+  function handleAvatarFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      onAvatarError("请选择图片文件作为头像。");
+      return;
+    }
+    if (file.size > 512 * 1024) {
+      onAvatarError("头像图片不能超过 512KB，请先压缩后再上传。");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        onAvatarChange(reader.result);
+      }
+    };
+    reader.onerror = () => onAvatarError("读取头像失败，请换一张图片。");
+    reader.readAsDataURL(file);
+  }
+
   return (
     <div className="profile-panel">
-      <label className="field">
-        <span>显示昵称</span>
-        <input
-          value={name}
-          maxLength={18}
-          onChange={(event) => onNameChange(event.target.value)}
-        />
-      </label>
+      <div className="profile-edit-grid">
+        <div className="avatar-editor">
+          <div className="avatar-preview">
+            {avatarUrl ? (
+              <img src={avatarUrl} alt={`${name || "用户"}的头像`} />
+            ) : (
+              <span>{initialOf(name || "新玩家")}</span>
+            )}
+          </div>
+          <div className="avatar-actions">
+            <label className="icon-text-button avatar-upload">
+              <ImagePlus size={18} />
+              修改头像
+              <input type="file" accept="image/*" onChange={handleAvatarFile} />
+            </label>
+            {avatarUrl && (
+              <button className="icon-text-button" type="button" onClick={() => onAvatarChange("")}>
+                移除头像
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="profile-fields">
+          <label className="field">
+            <span>显示昵称</span>
+            <input
+              value={name}
+              maxLength={18}
+              onChange={(event) => onNameChange(event.target.value)}
+              placeholder="例如：新玩家"
+            />
+          </label>
+          <label className="field">
+            <span>荣誉介绍</span>
+            <textarea
+              value={honorText}
+              maxLength={180}
+              onChange={(event) => onHonorTextChange(event.target.value)}
+              placeholder="写一句你的桌游宣言、擅长游戏或获胜荣誉"
+            />
+          </label>
+        </div>
+      </div>
+
       <div className="profile-actions">
         <button className="secondary-action" onClick={onSave}>
           <Check size={19} />
-          保存
+          保存资料
         </button>
         <button className="icon-text-button" onClick={onSignOut}>
           <LogOut size={18} />
@@ -2170,19 +2321,42 @@ function ProfilePanel({
         </button>
       </div>
       <p className="hint">{email}</p>
+
+      <div className="profile-summary-grid">
+        <div>
+          <span>总局数</span>
+          <strong>{totalGames}</strong>
+        </div>
+        <div>
+          <span>胜场</span>
+          <strong>{wins}</strong>
+        </div>
+        <div>
+          <span>平局</span>
+          <strong>{draws}</strong>
+        </div>
+        <div>
+          <span>胜率</span>
+          <strong>{winRate}%</strong>
+        </div>
+      </div>
+
+      <div className="section-heading-inline">
+        <Trophy size={19} />
+        <strong>游戏记录</strong>
+      </div>
       <div className="record-list">
         {records.length === 0 ? (
           <p className="hint">暂无战绩，玩一局后会出现在这里。</p>
         ) : (
           records.map((record) => (
             <div key={record.id} className="record-row">
-              <span>{GAME_META[record.game_type].name}</span>
-              <strong>
-                {record.result === "win"
-                  ? "胜"
-                  : record.result === "loss"
-                    ? "负"
-                    : "平"}
+              <div>
+                <span>{GAME_META[record.game_type].name}</span>
+                <small>{new Date(record.created_at).toLocaleDateString("zh-CN")}</small>
+              </div>
+              <strong className={`record-result ${record.result}`}>
+                {record.result === "win" ? "胜" : record.result === "loss" ? "负" : "平"}
               </strong>
             </div>
           ))

@@ -92,7 +92,7 @@ const origins = process.env.CLIENT_ORIGIN
   : true;
 
 app.use(cors({ origin: origins, credentials: true }));
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));
 
 const io = new Server(server, {
   cors: {
@@ -284,7 +284,7 @@ app.get("/api/profile", async (req, res) => {
 
   const { data, error } = await supabase
     .from("profiles")
-    .select("display_name, avatar_url")
+    .select("display_name, avatar_url, honor_text")
     .eq("id", auth.user.id)
     .maybeSingle();
 
@@ -302,6 +302,7 @@ app.get("/api/profile", async (req, res) => {
       id: auth.user.id,
       display_name: displayName,
       avatar_url: null,
+      honor_text: "",
       updated_at: new Date().toISOString()
     });
 
@@ -313,7 +314,8 @@ app.get("/api/profile", async (req, res) => {
 
   res.json({
     displayName,
-    avatarUrl: data?.avatar_url || null
+    avatarUrl: data?.avatar_url || null,
+    honorText: data?.honor_text || ""
   });
 });
 
@@ -330,9 +332,13 @@ app.put("/api/profile", async (req, res) => {
   }
 
   const displayName = normalizePlayerName(req.body?.displayName);
+  const avatarUrl = normalizeProfileAvatarUrl(req.body?.avatarUrl);
+  const honorText = normalizeProfileText(req.body?.honorText, 180);
   const { error } = await supabase.from("profiles").upsert({
     id: auth.user.id,
     display_name: displayName,
+    avatar_url: avatarUrl,
+    honor_text: honorText,
     updated_at: new Date().toISOString()
   });
 
@@ -341,7 +347,7 @@ app.put("/api/profile", async (req, res) => {
     return;
   }
 
-  res.json({ displayName });
+  res.json({ displayName, avatarUrl, honorText });
 });
 
 const distPath = path.resolve(process.cwd(), "dist");
@@ -675,6 +681,28 @@ function getDefaultProfileName(user: User) {
       ? user.user_metadata.display_name
       : "";
   return metadataName || user.email?.split("@")[0] || "新玩家";
+}
+
+function normalizeProfileText(value: unknown, maxLength: number) {
+  if (typeof value !== "string") return "";
+  return value.trim().slice(0, maxLength);
+}
+
+function normalizeProfileAvatarUrl(value: unknown) {
+  if (typeof value !== "string") return null;
+  const clean = value.trim();
+  if (!clean) return null;
+  if (clean.length > 700_000) return null;
+  if (
+    clean.startsWith("data:image/png;base64,") ||
+    clean.startsWith("data:image/jpeg;base64,") ||
+    clean.startsWith("data:image/webp;base64,") ||
+    clean.startsWith("https://") ||
+    clean.startsWith("http://")
+  ) {
+    return clean;
+  }
+  return null;
 }
 
 async function readLoginAttempt(emailHash: string, dayKey: string) {

@@ -4,6 +4,7 @@ create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   display_name text not null,
   avatar_url text,
+  honor_text text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -46,6 +47,9 @@ alter table public.rooms_snapshot
 alter table public.rooms_snapshot
   add constraint rooms_snapshot_game_type_check
   check (game_type in ('undercover', 'gomoku', 'ludo', 'catan'));
+
+alter table public.profiles
+  add column if not exists honor_text text;
 
 alter table public.profiles enable row level security;
 alter table public.game_records enable row level security;
