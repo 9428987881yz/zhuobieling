@@ -110,10 +110,12 @@ const gameStepTimers = new Map<string, NodeJS.Timeout>();
 const GAME_STEP_MS = 2 * 60 * 1000;
 const MAX_DAILY_LOGIN_FAILURES = 6;
 const LOGIN_LOCK_TIME_ZONE = process.env.LOGIN_LOCK_TIME_ZONE || "Asia/Shanghai";
+const AUTH_CODE_COOLDOWN_MS = 30 * 1000;
 const fallbackLoginAttempts = new Map<
   string,
   { dayKey: string; failedCount: number; lockedUntilMs: number }
 >();
+const authCodeRequests = new Map<string, number>();
 
 const palette = [
   "#0ea5a4",
@@ -185,6 +187,51 @@ app.get("/api/health", (_req, res) => {
     rooms: rooms.size,
     supabase: Boolean(supabase),
     supabaseAuth: Boolean(supabaseAuth)
+  });
+});
+
+app.post("/api/auth/signup-code", async (req, res) => {
+  if (!supabaseAuth) {
+    res.status(503).json({ error: "账号系统还没配置完成，请稍后再试。" });
+    return;
+  }
+
+  const email = normalizeLoginEmail(req.body?.email);
+  const displayName = normalizePlayerName(req.body?.displayName);
+  if (!isLikelyEmail(email)) {
+    res.status(400).json({ error: "请输入正确的邮箱地址。" });
+    return;
+  }
+
+  const now = Date.now();
+  const emailHash = hashLoginEmail(email);
+  const lastSentAt = authCodeRequests.get(emailHash) || 0;
+  const elapsed = now - lastSentAt;
+  if (elapsed < AUTH_CODE_COOLDOWN_MS) {
+    res.status(429).json({
+      error: "验证码发送太频繁，请稍后再试。",
+      retryAfterSeconds: Math.ceil((AUTH_CODE_COOLDOWN_MS - elapsed) / 1000)
+    });
+    return;
+  }
+
+  const { error } = await supabaseAuth.auth.signInWithOtp({
+    email,
+    options: {
+      shouldCreateUser: true,
+      data: { display_name: displayName }
+    }
+  });
+
+  if (error) {
+    res.status(400).json({ error: error.message });
+    return;
+  }
+
+  authCodeRequests.set(emailHash, now);
+  res.json({
+    sent: true,
+    retryAfterSeconds: Math.ceil(AUTH_CODE_COOLDOWN_MS / 1000)
   });
 });
 
@@ -644,6 +691,10 @@ function createSupabaseAuthClient(): SupabaseClient | null {
 
 function normalizeLoginEmail(value: unknown) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function isLikelyEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
 function hashLoginEmail(email: string) {

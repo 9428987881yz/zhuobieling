@@ -181,6 +181,9 @@ button:disabled {
 
 .home-account-menu {
   position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .account-avatar-button {
@@ -199,6 +202,22 @@ button:disabled {
   color: #fff;
   background: var(--brand-ink);
   border-color: var(--brand-ink);
+}
+
+.auth-open-button {
+  min-height: 42px;
+  padding: 0 14px;
+  color: #fff;
+  background: var(--brand-ink);
+  border: 1px solid var(--brand-ink);
+  border-radius: 999px;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.1);
+  font-weight: 900;
+}
+
+.auth-open-button:hover,
+.auth-open-button:focus-visible {
+  background: #0b3e59;
 }
 
 .account-avatar-button > .fallback-initial {
@@ -307,6 +326,42 @@ button:disabled {
 
 .account-dropdown button.danger {
   color: #b91c1c;
+}
+
+.auth-dialog-backdrop {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(15, 23, 42, 0.42);
+  backdrop-filter: blur(6px);
+}
+
+.auth-dialog {
+  width: min(100%, 460px);
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+  padding: 18px;
+  background: #fff;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  box-shadow: 0 30px 80px rgba(15, 23, 42, 0.24);
+}
+
+.auth-dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.auth-dialog-head h2 {
+  margin: 3px 0 0;
+  color: #152033;
+  font-size: 1.55rem;
+  letter-spacing: 0;
 }
 
 .security-panel {
@@ -734,6 +789,23 @@ button:disabled {
 .join-form .secondary-action,
 .auth-form .secondary-action {
   margin-top: 16px;
+}
+
+.code-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 116px;
+  gap: 10px;
+  align-items: end;
+}
+
+.code-row .field {
+  margin-top: 16px;
+}
+
+.code-send-button {
+  min-height: 44px;
+  margin-bottom: 0;
+  white-space: nowrap;
 }
 
 .account-panel {
@@ -2034,6 +2106,24 @@ button:disabled {
 
   .home-account-menu {
     margin-left: auto;
+  }
+
+  .auth-open-button {
+    min-height: 40px;
+    padding: 0 12px;
+  }
+
+  .auth-dialog {
+    padding: 14px;
+  }
+
+  .auth-dialog-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .code-row {
+    grid-template-columns: 1fr;
   }
 
   .account-dropdown {

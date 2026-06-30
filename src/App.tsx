@@ -30,7 +30,8 @@ import {
   UserRound,
   Users,
   Wifi,
-  WifiOff
+  WifiOff,
+  X
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { io, Socket } from "socket.io-client";
@@ -73,6 +74,12 @@ type ProfileResponse = {
   displayName?: string;
   avatarUrl?: string | null;
   honorText?: string;
+  error?: string;
+};
+
+type AuthCodeResponse = {
+  sent?: boolean;
+  retryAfterSeconds?: number;
   error?: string;
 };
 
@@ -228,9 +235,15 @@ export default function App() {
   const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [signupCode, setSignupCode] = useState("");
+  const [signupCodeSent, setSignupCodeSent] = useState(false);
+  const [signupCodeCooldown, setSignupCodeCooldown] = useState(0);
+  const [sendingSignupCode, setSendingSignupCode] = useState(false);
+  const [authSubmitting, setAuthSubmitting] = useState(false);
   const [records, setRecords] = useState<GameRecord[]>([]);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [accountPanelView, setAccountPanelView] = useState<AccountPanelView>(null);
+  const [authDialogOpen, setAuthDialogOpen] = useState(false);
 
   const socket = useMemo(
     () =>
@@ -320,6 +333,15 @@ export default function App() {
     const timer = window.setTimeout(() => setNotice(null), 3600);
     return () => window.clearTimeout(timer);
   }, [notice]);
+
+  useEffect(() => {
+    if (signupCodeCooldown <= 0) return;
+    const timer = window.setTimeout(
+      () => setSignupCodeCooldown((seconds) => Math.max(0, seconds - 1)),
+      1000
+    );
+    return () => window.clearTimeout(timer);
+  }, [signupCodeCooldown]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -412,35 +434,118 @@ export default function App() {
       setNotice({ tone: "error", text: "请输入邮箱，密码至少 6 位。" });
       return;
     }
-
-    const result =
-      authMode === "signup"
-        ? await supabase.auth.signUp({
-            email: cleanEmail,
-            password,
-            options: { data: { display_name: displayName } }
-          })
-        : await signInWithDailyLockout(cleanEmail, password);
-
-    if (result.error) {
-      setNotice({ tone: "error", text: result.error.message });
+    if (!isLikelyEmail(cleanEmail)) {
+      setNotice({ tone: "error", text: "请输入正确的邮箱地址。" });
       return;
     }
 
-    if (result.data.user) {
-      await upsertProfile(
-        result.data.user.id,
-        displayName,
-        profileAvatarUrl,
-        profileHonorText,
-        result.data.session?.access_token
-      );
+    setAuthSubmitting(true);
+    try {
+      if (authMode === "signup") {
+        const cleanCode = signupCode.replace(/\s/g, "");
+        if (!cleanCode) {
+          setNotice({ tone: "error", text: "请输入邮箱验证码。" });
+          return;
+        }
+
+        const result = await supabase.auth.verifyOtp({
+          email: cleanEmail,
+          token: cleanCode,
+          type: "email"
+        });
+
+        if (result.error || !result.data.session || !result.data.user) {
+          setNotice({
+            tone: "error",
+            text: result.error?.message || "验证码不正确或已过期，请重新发送。"
+          });
+          return;
+        }
+
+        await supabase.auth.setSession({
+          access_token: result.data.session.access_token,
+          refresh_token: result.data.session.refresh_token
+        });
+
+        const update = await supabase.auth.updateUser({
+          password,
+          data: { display_name: displayName }
+        });
+        if (update.error) {
+          setNotice({ tone: "error", text: update.error.message });
+          return;
+        }
+
+        await upsertProfile(
+          result.data.user.id,
+          displayName,
+          profileAvatarUrl,
+          profileHonorText,
+          result.data.session.access_token
+        );
+        setSignupCode("");
+        setSignupCodeSent(false);
+        setAuthDialogOpen(false);
+        setNotice({ tone: "success", text: "邮箱验证成功，账号已注册并登录。" });
+        return;
+      }
+
+      const result = await signInWithDailyLockout(cleanEmail, password);
+
+      if (result.error) {
+        setNotice({ tone: "error", text: result.error.message });
+        return;
+      }
+
+      if (result.data.user) {
+        await upsertProfile(
+          result.data.user.id,
+          displayName,
+          profileAvatarUrl,
+          profileHonorText,
+          result.data.session?.access_token
+        );
+      }
+
+      setAuthDialogOpen(false);
+      setNotice({ tone: "success", text: "已登录。" });
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }
+
+  async function requestSignupCode() {
+    const cleanEmail = email.trim();
+    if (!isLikelyEmail(cleanEmail)) {
+      setNotice({ tone: "error", text: "请输入正确的邮箱地址。" });
+      return;
     }
 
-    setNotice({
-      tone: "success",
-      text: authMode === "signup" ? "账号已创建。" : "已登录。"
-    });
+    setSendingSignupCode(true);
+    try {
+      const response = await fetch(`${apiUrl.replace(/\/$/, "")}/api/auth/signup-code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: cleanEmail,
+          displayName
+        })
+      });
+      const payload = (await response.json().catch(() => ({}))) as AuthCodeResponse;
+      if (!response.ok) {
+        if (payload.retryAfterSeconds) {
+          setSignupCodeCooldown(payload.retryAfterSeconds);
+        }
+        setNotice({ tone: "error", text: payload.error || "验证码发送失败。" });
+        return;
+      }
+
+      setSignupCodeSent(true);
+      setSignupCodeCooldown(payload.retryAfterSeconds || 30);
+      setNotice({ tone: "success", text: "验证码已发送，请查看邮箱。" });
+    } finally {
+      setSendingSignupCode(false);
+    }
   }
 
   async function upsertProfile(
@@ -489,7 +594,8 @@ export default function App() {
 
   function createRoom() {
     if (!authToken || !authProfile) {
-      setNotice({ tone: "error", text: "请先注册或登录账号后再创建房间。" });
+      openAuthDialog("signin");
+      setNotice({ tone: "info", text: "请先登录或注册账号后再创建房间。" });
       return;
     }
 
@@ -506,7 +612,8 @@ export default function App() {
   function joinRoom(event?: FormEvent) {
     event?.preventDefault();
     if (!authToken || !authProfile) {
-      setNotice({ tone: "error", text: "请先注册或登录账号后再加入房间。" });
+      openAuthDialog("signin");
+      setNotice({ tone: "info", text: "请先登录或注册账号后再加入房间。" });
       return;
     }
 
@@ -541,6 +648,20 @@ export default function App() {
     setActiveGame(null);
   }
 
+  function openAuthDialog(mode: "signin" | "signup" = "signin") {
+    setAuthMode(mode);
+    setAuthDialogOpen(true);
+    setAccountMenuOpen(false);
+    setAccountPanelView(null);
+  }
+
+  function changeAuthMode(mode: "signin" | "signup") {
+    setAuthMode(mode);
+    if (mode === "signin") {
+      setSignupCode("");
+    }
+  }
+
   if (room) {
     return (
       <RoomScreen
@@ -566,6 +687,11 @@ export default function App() {
         honorText={profileHonorText}
         email={email}
         password={password}
+        signupCode={signupCode}
+        signupCodeSent={signupCodeSent}
+        signupCodeCooldown={signupCodeCooldown}
+        sendingSignupCode={sendingSignupCode}
+        submitting={authSubmitting}
         records={records}
         authMode={authMode}
         notice={notice}
@@ -586,9 +712,11 @@ export default function App() {
           setAccountPanelView(null);
           void supabase?.auth.signOut();
         }}
-        onAuthModeChange={setAuthMode}
+        onAuthModeChange={changeAuthMode}
         onEmailChange={setEmail}
         onPasswordChange={setPassword}
+        onSignupCodeChange={setSignupCode}
+        onRequestSignupCode={requestSignupCode}
         onAuthSubmit={handleAuth}
       />
     );
@@ -596,71 +724,94 @@ export default function App() {
 
   if (!activeGame) {
     return (
-      <main className="app-shell home-shell">
-        <section className="home-title-band">
-          <div className="brand-lockup">
-            <img className="brand-mark" src={brandLogoUrl} alt="桌别零图形标识" />
-            <div>
-              <div className="eyebrow">
-                <Gamepad2 size={16} />
-                在线桌游
+      <>
+        <main className="app-shell home-shell">
+          <section className="home-title-band">
+            <div className="brand-lockup">
+              <img className="brand-mark" src={brandLogoUrl} alt="桌别零图形标识" />
+              <div>
+                <div className="eyebrow">
+                  <Gamepad2 size={16} />
+                  在线桌游
+                </div>
+                <h1>{BRAND_NAME}</h1>
               </div>
-              <h1>{BRAND_NAME}</h1>
             </div>
-          </div>
-          <div className="home-header-actions">
-            <div className={socketConnected ? "status online" : "status offline"}>
-              {socketConnected ? <Wifi size={18} /> : <WifiOff size={18} />}
-              {socketConnected ? "服务器已连接" : "连接中"}
+            <div className="home-header-actions">
+              <div className={socketConnected ? "status online" : "status offline"}>
+                {socketConnected ? <Wifi size={18} /> : <WifiOff size={18} />}
+                {socketConnected ? "服务器已连接" : "连接中"}
+              </div>
+              <HomeAccountMenu
+                displayName={displayName}
+                avatarUrl={profileAvatarUrl}
+                email={session?.user.email || ""}
+                isSignedIn={Boolean(session?.user)}
+                menuOpen={accountMenuOpen}
+                onToggle={() => setAccountMenuOpen((open) => !open)}
+                onAuthOpen={openAuthDialog}
+                onSelect={(view) => {
+                  setAccountPanelView(view);
+                  setAccountMenuOpen(false);
+                }}
+                onSignOut={() => {
+                  setAccountMenuOpen(false);
+                  setAccountPanelView(null);
+                  void supabase?.auth.signOut();
+                }}
+              />
             </div>
-            <HomeAccountMenu
-              displayName={displayName}
-              avatarUrl={profileAvatarUrl}
-              email={session?.user.email || ""}
-              isSignedIn={Boolean(session?.user)}
-              menuOpen={accountMenuOpen}
-              onToggle={() => setAccountMenuOpen((open) => !open)}
-              onSelect={(view) => {
-                setAccountPanelView(view);
-                setAccountMenuOpen(false);
-              }}
-              onSignOut={() => {
-                setAccountMenuOpen(false);
-                setAccountPanelView(null);
-                void supabase?.auth.signOut();
-              }}
-            />
-          </div>
-        </section>
+          </section>
 
-        {notice && <NoticeBar notice={notice} />}
+          {notice && <NoticeBar notice={notice} />}
 
-        <section className="category-list">
-          {gameCategories.map((category) => (
-            <div className="game-category" key={category.title}>
-              <div className="category-heading">
-                <span className="panel-kicker">游戏类别</span>
-                <h2>{category.title}</h2>
-                <p>{category.description}</p>
+          <section className="category-list">
+            {gameCategories.map((category) => (
+              <div className="game-category" key={category.title}>
+                <div className="category-heading">
+                  <span className="panel-kicker">游戏类别</span>
+                  <h2>{category.title}</h2>
+                  <p>{category.description}</p>
+                </div>
+                <div className="category-games">
+                  {category.games.map((type) => (
+                    <button
+                      className="home-game-card"
+                      key={type}
+                      onClick={() => openGame(type)}
+                      type="button"
+                    >
+                      <GameGlyph type={type} />
+                      <span>{GAME_META[type].name}</span>
+                      <small>{GAME_META[type].shortDescription}</small>
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div className="category-games">
-                {category.games.map((type) => (
-                  <button
-                    className="home-game-card"
-                    key={type}
-                    onClick={() => openGame(type)}
-                    type="button"
-                  >
-                    <GameGlyph type={type} />
-                    <span>{GAME_META[type].name}</span>
-                    <small>{GAME_META[type].shortDescription}</small>
-                  </button>
-                ))}
-              </div>
-            </div>
-          ))}
-        </section>
-      </main>
+            ))}
+          </section>
+        </main>
+        {authDialogOpen && !session?.user && (
+          <AuthDialog
+            configured={isSupabaseConfigured}
+            mode={authMode}
+            email={email}
+            password={password}
+            signupCode={signupCode}
+            signupCodeSent={signupCodeSent}
+            signupCodeCooldown={signupCodeCooldown}
+            sendingSignupCode={sendingSignupCode}
+            submitting={authSubmitting}
+            onClose={() => setAuthDialogOpen(false)}
+            onModeChange={changeAuthMode}
+            onEmailChange={setEmail}
+            onPasswordChange={setPassword}
+            onSignupCodeChange={setSignupCode}
+            onRequestSignupCode={requestSignupCode}
+            onSubmit={handleAuth}
+          />
+        )}
+      </>
     );
   }
 
@@ -793,9 +944,16 @@ export default function App() {
               mode={authMode}
               email={email}
               password={password}
-              onModeChange={setAuthMode}
+              signupCode={signupCode}
+              signupCodeSent={signupCodeSent}
+              signupCodeCooldown={signupCodeCooldown}
+              sendingSignupCode={sendingSignupCode}
+              submitting={authSubmitting}
+              onModeChange={changeAuthMode}
               onEmailChange={setEmail}
               onPasswordChange={setPassword}
+              onSignupCodeChange={setSignupCode}
+              onRequestSignupCode={requestSignupCode}
               onSubmit={handleAuth}
             />
           )}
@@ -1988,6 +2146,7 @@ function HomeAccountMenu({
   isSignedIn,
   menuOpen,
   onToggle,
+  onAuthOpen,
   onSelect,
   onSignOut
 }: {
@@ -1997,6 +2156,7 @@ function HomeAccountMenu({
   isSignedIn: boolean;
   menuOpen: boolean;
   onToggle: () => void;
+  onAuthOpen: (mode?: "signin" | "signup") => void;
   onSelect: (view: Exclude<AccountPanelView, null>) => void;
   onSignOut: () => void;
 }) {
@@ -2006,7 +2166,7 @@ function HomeAccountMenu({
         className={isSignedIn ? "account-avatar-button signed-in" : "account-avatar-button"}
         type="button"
         aria-expanded={menuOpen}
-        onClick={onToggle}
+        onClick={isSignedIn ? onToggle : () => onAuthOpen("signin")}
       >
         {isSignedIn ? (
           <AvatarFigure avatarUrl={avatarUrl} fallback={initialOf(displayName)} />
@@ -2014,8 +2174,13 @@ function HomeAccountMenu({
           <UserRound size={20} />
         )}
       </button>
+      {!isSignedIn && (
+        <button className="auth-open-button" type="button" onClick={() => onAuthOpen("signin")}>
+          登录/注册
+        </button>
+      )}
 
-      {menuOpen && (
+      {menuOpen && isSignedIn && (
         <div className="account-dropdown">
           <div className="account-dropdown-head">
             <strong>{isSignedIn ? displayName : "未登录"}</strong>
@@ -2050,6 +2215,11 @@ function AccountPage({
   honorText,
   email,
   password,
+  signupCode,
+  signupCodeSent,
+  signupCodeCooldown,
+  sendingSignupCode,
+  submitting,
   records,
   authMode,
   notice,
@@ -2062,6 +2232,8 @@ function AccountPage({
   onAuthModeChange,
   onEmailChange,
   onPasswordChange,
+  onSignupCodeChange,
+  onRequestSignupCode,
   onAuthSubmit
 }: {
   view: Exclude<AccountPanelView, null>;
@@ -2072,6 +2244,11 @@ function AccountPage({
   honorText: string;
   email: string;
   password: string;
+  signupCode: string;
+  signupCodeSent: boolean;
+  signupCodeCooldown: number;
+  sendingSignupCode: boolean;
+  submitting: boolean;
   records: GameRecord[];
   authMode: "signin" | "signup";
   notice: Notice | null;
@@ -2084,6 +2261,8 @@ function AccountPage({
   onAuthModeChange: (mode: "signin" | "signup") => void;
   onEmailChange: (value: string) => void;
   onPasswordChange: (value: string) => void;
+  onSignupCodeChange: (value: string) => void;
+  onRequestSignupCode: () => void;
   onAuthSubmit: (event: FormEvent) => void;
 }) {
   return (
@@ -2154,9 +2333,16 @@ function AccountPage({
             mode={authMode}
             email={email}
             password={password}
+            signupCode={signupCode}
+            signupCodeSent={signupCodeSent}
+            signupCodeCooldown={signupCodeCooldown}
+            sendingSignupCode={sendingSignupCode}
+            submitting={submitting}
             onModeChange={onAuthModeChange}
             onEmailChange={onEmailChange}
             onPasswordChange={onPasswordChange}
+            onSignupCodeChange={onSignupCodeChange}
+            onRequestSignupCode={onRequestSignupCode}
             onSubmit={onAuthSubmit}
           />
         )}
@@ -2165,31 +2351,125 @@ function AccountPage({
   );
 }
 
-function AuthPanel({
+function AuthDialog({
   configured,
   mode,
   email,
   password,
+  signupCode,
+  signupCodeSent,
+  signupCodeCooldown,
+  sendingSignupCode,
+  submitting,
+  onClose,
   onModeChange,
   onEmailChange,
   onPasswordChange,
+  onSignupCodeChange,
+  onRequestSignupCode,
   onSubmit
 }: {
   configured: boolean;
   mode: "signin" | "signup";
   email: string;
   password: string;
+  signupCode: string;
+  signupCodeSent: boolean;
+  signupCodeCooldown: number;
+  sendingSignupCode: boolean;
+  submitting: boolean;
+  onClose: () => void;
   onModeChange: (mode: "signin" | "signup") => void;
   onEmailChange: (value: string) => void;
   onPasswordChange: (value: string) => void;
+  onSignupCodeChange: (value: string) => void;
+  onRequestSignupCode: () => void;
   onSubmit: (event: FormEvent) => void;
 }) {
   return (
+    <div className="auth-dialog-backdrop" onMouseDown={onClose}>
+      <section
+        aria-labelledby="auth-dialog-title"
+        aria-modal="true"
+        className="auth-dialog"
+        onMouseDown={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <div className="auth-dialog-head">
+          <div>
+            <span className="panel-kicker">账号入口</span>
+            <h2 id="auth-dialog-title">{mode === "signup" ? "注册账号" : "登录账号"}</h2>
+          </div>
+          <button className="icon-text-button" type="button" onClick={onClose}>
+            <X size={18} />
+            关闭
+          </button>
+        </div>
+        <AuthPanel
+          configured={configured}
+          mode={mode}
+          email={email}
+          password={password}
+          signupCode={signupCode}
+          signupCodeSent={signupCodeSent}
+          signupCodeCooldown={signupCodeCooldown}
+          sendingSignupCode={sendingSignupCode}
+          submitting={submitting}
+          onModeChange={onModeChange}
+          onEmailChange={onEmailChange}
+          onPasswordChange={onPasswordChange}
+          onSignupCodeChange={onSignupCodeChange}
+          onRequestSignupCode={onRequestSignupCode}
+          onSubmit={onSubmit}
+        />
+      </section>
+    </div>
+  );
+}
+
+function AuthPanel({
+  configured,
+  mode,
+  email,
+  password,
+  signupCode,
+  signupCodeSent,
+  signupCodeCooldown,
+  sendingSignupCode,
+  submitting,
+  onModeChange,
+  onEmailChange,
+  onPasswordChange,
+  onSignupCodeChange,
+  onRequestSignupCode,
+  onSubmit
+}: {
+  configured: boolean;
+  mode: "signin" | "signup";
+  email: string;
+  password: string;
+  signupCode: string;
+  signupCodeSent: boolean;
+  signupCodeCooldown: number;
+  sendingSignupCode: boolean;
+  submitting: boolean;
+  onModeChange: (mode: "signin" | "signup") => void;
+  onEmailChange: (value: string) => void;
+  onPasswordChange: (value: string) => void;
+  onSignupCodeChange: (value: string) => void;
+  onRequestSignupCode: () => void;
+  onSubmit: (event: FormEvent) => void;
+}) {
+  const canSendSignupCode = configured && !sendingSignupCode && signupCodeCooldown <= 0;
+
+  return (
     <form className="auth-form" onSubmit={onSubmit}>
       <p className="hint">
-        {configured
-          ? "必须注册或登录后才能创建、加入房间，并保存昵称和战绩。"
-          : "当前未配置 Supabase，账号系统不可用，暂时不能进入房间。"}
+        {configured && mode === "signup"
+          ? "注册需要邮箱验证码，验证成功后才会创建并登录账号。"
+          : configured
+            ? "必须登录后才能创建、加入房间，并保存昵称和战绩。"
+            : "当前未配置 Supabase，账号系统不可用，暂时不能进入房间。"}
       </p>
       <div className="segmented">
         <button
@@ -2227,9 +2507,39 @@ function AuthPanel({
           placeholder="至少 6 位"
         />
       </label>
-      <button className="secondary-action" disabled={!configured} type="submit">
+      {mode === "signup" && (
+        <div className="code-row">
+          <label className="field">
+            <span>邮箱验证码</span>
+            <input
+              inputMode="numeric"
+              value={signupCode}
+              onChange={(event) =>
+                onSignupCodeChange(event.target.value.replace(/\D/g, "").slice(0, 8))
+              }
+              disabled={!configured}
+              placeholder={signupCodeSent ? "输入邮箱里的验证码" : "先发送验证码"}
+            />
+          </label>
+          <button
+            className="icon-text-button code-send-button"
+            disabled={!canSendSignupCode}
+            onClick={onRequestSignupCode}
+            type="button"
+          >
+            {sendingSignupCode
+              ? "发送中"
+              : signupCodeCooldown > 0
+                ? `${signupCodeCooldown} 秒`
+                : signupCodeSent
+                  ? "重新发送"
+                  : "发送验证码"}
+          </button>
+        </div>
+      )}
+      <button className="secondary-action" disabled={!configured || submitting} type="submit">
         <KeyRound size={19} />
-        {mode === "signin" ? "登录账号" : "创建账号"}
+        {submitting ? "处理中" : mode === "signin" ? "登录账号" : "验证并注册"}
       </button>
     </form>
   );
@@ -2399,6 +2709,10 @@ function normalizeRoomCode(value: string) {
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "")
     .slice(0, 6);
+}
+
+function isLikelyEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 }
 
 const catanResourceOrder: CatanResource[] = ["wood", "brick", "sheep", "wheat", "ore"];
