@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { Server, Socket } from "socket.io";
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { createClient, SupabaseClient, type User } from "@supabase/supabase-js";
 import {
   AuthProfile,
   CatanEdge,
@@ -268,6 +268,80 @@ app.post("/api/auth/login", async (req, res) => {
     session: data.session,
     user: data.user
   });
+});
+
+app.get("/api/profile", async (req, res) => {
+  if (!supabase) {
+    res.status(503).json({ error: "账号系统还没配置完成，请稍后再试。" });
+    return;
+  }
+
+  const auth = await getAuthenticatedRequestUser(req.headers.authorization);
+  if ("error" in auth) {
+    res.status(auth.status).json({ error: auth.error });
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("display_name, avatar_url")
+    .eq("id", auth.user.id)
+    .maybeSingle();
+
+  if (error) {
+    res.status(500).json({ error: "读取个人资料失败，请检查 Supabase 配置。" });
+    return;
+  }
+
+  const displayName = normalizePlayerName(
+    data?.display_name || getDefaultProfileName(auth.user)
+  );
+
+  if (!data) {
+    const { error: insertError } = await supabase.from("profiles").upsert({
+      id: auth.user.id,
+      display_name: displayName,
+      avatar_url: null,
+      updated_at: new Date().toISOString()
+    });
+
+    if (insertError) {
+      res.status(500).json({ error: "创建个人资料失败，请检查 Supabase 配置。" });
+      return;
+    }
+  }
+
+  res.json({
+    displayName,
+    avatarUrl: data?.avatar_url || null
+  });
+});
+
+app.put("/api/profile", async (req, res) => {
+  if (!supabase) {
+    res.status(503).json({ error: "账号系统还没配置完成，请稍后再试。" });
+    return;
+  }
+
+  const auth = await getAuthenticatedRequestUser(req.headers.authorization);
+  if ("error" in auth) {
+    res.status(auth.status).json({ error: auth.error });
+    return;
+  }
+
+  const displayName = normalizePlayerName(req.body?.displayName);
+  const { error } = await supabase.from("profiles").upsert({
+    id: auth.user.id,
+    display_name: displayName,
+    updated_at: new Date().toISOString()
+  });
+
+  if (error) {
+    res.status(500).json({ error: "保存个人资料失败。" });
+    return;
+  }
+
+  res.json({ displayName });
 });
 
 const distPath = path.resolve(process.cwd(), "dist");
@@ -573,6 +647,34 @@ function isInvalidLoginError(error: { message?: string }) {
     message.includes("invalid login credentials") ||
     message.includes("invalid credentials")
   );
+}
+
+async function getAuthenticatedRequestUser(
+  authorization: string | undefined
+): Promise<{ user: User } | { status: number; error: string }> {
+  if (!supabase) {
+    return { status: 503, error: "账号系统还没配置完成，请稍后再试。" };
+  }
+
+  const token = authorization?.replace(/^Bearer\s+/i, "").trim();
+  if (!token) {
+    return { status: 401, error: "请先登录账号。" };
+  }
+
+  const { data, error } = await supabase.auth.getUser(token);
+  if (error || !data.user) {
+    return { status: 401, error: "登录已失效，请重新登录。" };
+  }
+
+  return { user: data.user };
+}
+
+function getDefaultProfileName(user: User) {
+  const metadataName =
+    typeof user.user_metadata?.display_name === "string"
+      ? user.user_metadata.display_name
+      : "";
+  return metadataName || user.email?.split("@")[0] || "新玩家";
 }
 
 async function readLoginAttempt(emailHash: string, dayKey: string) {

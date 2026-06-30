@@ -240,14 +240,14 @@ export default function App() {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
       if (data.session?.user) {
-        void loadProfile(data.session.user.id);
+        void loadProfile(data.session.user.id, data.session.access_token);
       }
     });
 
     const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
       if (nextSession?.user) {
-        void loadProfile(nextSession.user.id);
+        void loadProfile(nextSession.user.id, nextSession.access_token);
       } else {
         setProfileName("");
         setRecords([]);
@@ -270,21 +270,32 @@ export default function App() {
     setNotice({ tone: "info", text: "已退出登录，请重新登录后再进入房间。" });
   }, [room, session?.user, socket]);
 
-  async function loadProfile(userId: string) {
+  async function loadProfile(userId: string, token?: string) {
     if (!supabase) return;
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("display_name")
-      .eq("id", userId)
-      .maybeSingle();
+    const profileToken = token || authToken;
+    if (!profileToken) return;
 
-    if (error) {
-      setNotice({ tone: "error", text: "读取个人资料失败，请检查 Supabase 配置。" });
+    const response = await fetch(`${apiUrl.replace(/\/$/, "")}/api/profile`, {
+      headers: {
+        Authorization: `Bearer ${profileToken}`
+      }
+    });
+    const payload = (await response.json().catch(() => ({}))) as {
+      displayName?: string;
+      error?: string;
+    };
+
+    if (!response.ok) {
+      setNotice({
+        tone: "error",
+        text: payload.error || "读取个人资料失败，请检查 Supabase 配置。"
+      });
       return;
     }
 
-    const nextName = data?.display_name || guestName;
+    const nextName = payload.displayName || guestName;
     setProfileName(nextName);
+    setGuestName(nextName);
   }
 
   async function loadRecords(userId: string) {
@@ -329,7 +340,7 @@ export default function App() {
     }
 
     if (result.data.user) {
-      await upsertProfile(result.data.user.id, displayName);
+      await upsertProfile(result.data.user.id, displayName, result.data.session?.access_token);
     }
 
     setNotice({
@@ -338,22 +349,40 @@ export default function App() {
     });
   }
 
-  async function upsertProfile(userId: string, name: string) {
+  async function upsertProfile(userId: string, name: string, token?: string) {
     if (!supabase) return;
     const cleanName = name.trim() || "新玩家";
-    const { error } = await supabase.from("profiles").upsert({
-      id: userId,
-      display_name: cleanName,
-      updated_at: new Date().toISOString()
-    });
-
-    if (error) {
-      setNotice({ tone: "error", text: "保存个人资料失败。" });
+    const profileToken = token || authToken;
+    if (!profileToken) {
+      setNotice({ tone: "error", text: "请先登录后再保存个人资料。" });
       return;
     }
 
-    setProfileName(cleanName);
-    setGuestName(cleanName);
+    const response = await fetch(`${apiUrl.replace(/\/$/, "")}/api/profile`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${profileToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        userId,
+        displayName: cleanName
+      })
+    });
+    const payload = (await response.json().catch(() => ({}))) as {
+      displayName?: string;
+      error?: string;
+    };
+
+    if (!response.ok) {
+      setNotice({ tone: "error", text: payload.error || "保存个人资料失败。" });
+      return;
+    }
+
+    const savedName = payload.displayName || cleanName;
+    setProfileName(savedName);
+    setGuestName(savedName);
+    setNotice({ tone: "success", text: "个人资料已保存。" });
   }
 
   function createRoom() {
