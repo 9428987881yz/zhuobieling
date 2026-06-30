@@ -228,6 +228,7 @@ export default function App() {
   );
 
   const displayName = (profileName || guestName || "新玩家").trim();
+  const nicknameInputValue = session?.user ? profileName : guestName;
   const authToken = session?.access_token;
   const canEnterRooms = Boolean(authToken && session?.user);
   const authProfile = session?.user
@@ -525,6 +526,35 @@ export default function App() {
     );
   }
 
+  if (accountPanelView) {
+    return (
+      <AccountPage
+        view={accountPanelView}
+        configured={isSupabaseConfigured}
+        session={session}
+        displayName={session?.user ? profileName : guestName}
+        email={email}
+        password={password}
+        records={records}
+        authMode={authMode}
+        notice={notice}
+        onClose={() => setAccountPanelView(null)}
+        onNameChange={setProfileName}
+        onProfileSave={() =>
+          session?.user && void upsertProfile(session.user.id, profileName)
+        }
+        onSignOut={() => {
+          setAccountPanelView(null);
+          void supabase?.auth.signOut();
+        }}
+        onAuthModeChange={setAuthMode}
+        onEmailChange={setEmail}
+        onPasswordChange={setPassword}
+        onAuthSubmit={handleAuth}
+      />
+    );
+  }
+
   if (!activeGame) {
     return (
       <main className="app-shell home-shell">
@@ -564,32 +594,6 @@ export default function App() {
         </section>
 
         {notice && <NoticeBar notice={notice} />}
-
-        {accountPanelView && (
-          <HomeAccountPanel
-            view={accountPanelView}
-            configured={isSupabaseConfigured}
-            session={session}
-            displayName={profileName || guestName}
-            email={email}
-            password={password}
-            records={records}
-            authMode={authMode}
-            onClose={() => setAccountPanelView(null)}
-            onNameChange={setProfileName}
-            onProfileSave={() =>
-              session?.user && void upsertProfile(session.user.id, profileName)
-            }
-            onSignOut={() => {
-              setAccountPanelView(null);
-              void supabase?.auth.signOut();
-            }}
-            onAuthModeChange={setAuthMode}
-            onEmailChange={setEmail}
-            onPasswordChange={setPassword}
-            onAuthSubmit={handleAuth}
-          />
-        )}
 
         <section className="category-list">
           {gameCategories.map((category) => (
@@ -644,7 +648,7 @@ export default function App() {
           <label className="field">
             <span>你的昵称</span>
             <input
-              value={displayName}
+              value={nicknameInputValue}
               maxLength={18}
               onChange={(event) => {
                 setGuestName(event.target.value);
@@ -725,7 +729,7 @@ export default function App() {
 
           {session ? (
             <ProfilePanel
-              name={profileName || guestName}
+              name={profileName}
               email={session.user.email || ""}
               records={records}
               onNameChange={setProfileName}
@@ -1952,7 +1956,7 @@ function HomeAccountMenu({
   );
 }
 
-function HomeAccountPanel({
+function AccountPage({
   view,
   configured,
   session,
@@ -1961,6 +1965,7 @@ function HomeAccountPanel({
   password,
   records,
   authMode,
+  notice,
   onClose,
   onNameChange,
   onProfileSave,
@@ -1978,6 +1983,7 @@ function HomeAccountPanel({
   password: string;
   records: GameRecord[];
   authMode: "signin" | "signup";
+  notice: Notice | null;
   onClose: () => void;
   onNameChange: (value: string) => void;
   onProfileSave: () => void;
@@ -1988,63 +1994,73 @@ function HomeAccountPanel({
   onAuthSubmit: (event: FormEvent) => void;
 }) {
   return (
-    <section className="panel home-account-panel">
-      <div className="panel-heading">
+    <main className="app-shell account-page-shell">
+      <button className="icon-text-button back-button" type="button" onClick={onClose}>
+        <ArrowLeft size={18} />
+        返回首页
+      </button>
+
+      <section className="account-page-hero">
+        <div className="account-page-avatar">
+          {session ? initialOf(displayName || "新玩家") : <UserRound size={34} />}
+        </div>
         <div>
           <span className="panel-kicker">账号中心</span>
-          <h2>{view === "details" ? "详细资料" : "账号安全"}</h2>
+          <h1>{view === "details" ? "详细资料" : "账号安全"}</h1>
+          <p>{session ? session.user.email || "已登录账号" : "登录后可创建和加入房间"}</p>
         </div>
-        <button className="icon-text-button" type="button" onClick={onClose}>
-          关闭
-        </button>
-      </div>
+      </section>
 
-      {session ? (
-        view === "details" ? (
-          <ProfilePanel
-            name={displayName}
-            email={session.user.email || ""}
-            records={records}
-            onNameChange={onNameChange}
-            onSave={onProfileSave}
-            onSignOut={onSignOut}
-          />
+      {notice && <NoticeBar notice={notice} />}
+
+      <section className="panel account-page-panel">
+        {session ? (
+          view === "details" ? (
+            <ProfilePanel
+              name={displayName}
+              email={session.user.email || ""}
+              records={records}
+              onNameChange={onNameChange}
+              onSave={onProfileSave}
+              onSignOut={onSignOut}
+            />
+          ) : (
+            <div className="security-panel">
+              <div className="security-row">
+                <span>登录邮箱</span>
+                <strong>{session.user.email || "未绑定邮箱"}</strong>
+              </div>
+              <div className="security-row">
+                <span>登录保护</span>
+                <strong>密码输错 6 次，当天不能再登录</strong>
+              </div>
+              <div className="security-row">
+                <span>账号状态</span>
+                <strong>已登录，创建和加入房间已开启</strong>
+              </div>
+              <p className="hint">
+                为了保护账号，密码不会显示在网页里。忘记密码时，后续可以接 Supabase 邮件重置流程。
+              </p>
+              <button className="icon-text-button danger" type="button" onClick={onSignOut}>
+                <LogOut size={18} />
+                退出登录
+              </button>
+            </div>
+          )
         ) : (
-          <div className="security-panel">
-            <div className="security-row">
-              <span>登录邮箱</span>
-              <strong>{session.user.email || "未绑定邮箱"}</strong>
-            </div>
-            <div className="security-row">
-              <span>登录保护</span>
-              <strong>密码输错 6 次，当天不能再登录</strong>
-            </div>
-            <div className="security-row">
-              <span>账号状态</span>
-              <strong>已登录，创建和加入房间已开启</strong>
-            </div>
-            <p className="hint">
-              为了保护账号，密码不会显示在网页里。忘记密码时，后续可以接 Supabase 邮件重置流程。
-            </p>
-            <button className="icon-text-button danger" type="button" onClick={onSignOut}>
-              <LogOut size={18} />
-              退出登录
-            </button>
-          </div>
-        )
-      ) : (
-        <AuthPanel
-          configured={configured}
-          mode={authMode}
-          email={email}
-          password={password}
-          onModeChange={onAuthModeChange}
-          onEmailChange={onEmailChange}
-          onPasswordChange={onPasswordChange}
-          onSubmit={onAuthSubmit}
-        />
-      )}
-    </section>
+          <AuthPanel
+            configured={configured}
+            mode={authMode}
+            email={email}
+            password={password}
+            onModeChange={onAuthModeChange}
+            onEmailChange={onEmailChange}
+            onPasswordChange={onPasswordChange}
+            onSubmit={onAuthSubmit}
+          />
+        )}
+      </section>
+    </main>
   );
 }
 

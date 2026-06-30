@@ -266,14 +266,58 @@ button:disabled {
   color: #b91c1c;
 }
 
-.home-account-panel {
-  margin-top: 14px;
-}
-
 .security-panel {
   display: grid;
   gap: 10px;
   margin-top: 14px;
+}
+
+.account-page-shell {
+  max-width: 980px;
+}
+
+.account-page-hero {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-height: 160px;
+  padding: 24px;
+  background: #fff;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  box-shadow: 0 18px 55px rgba(15, 23, 42, 0.08);
+}
+
+.account-page-avatar {
+  display: grid;
+  place-items: center;
+  width: 96px;
+  height: 96px;
+  flex: 0 0 auto;
+  color: #fff;
+  background: var(--brand-ink);
+  border-radius: 50%;
+  font-size: 2rem;
+  font-weight: 900;
+  box-shadow: 0 18px 38px rgba(6, 47, 70, 0.22);
+}
+
+.account-page-hero h1 {
+  margin: 6px 0 8px;
+  color: #152033;
+  font-size: clamp(2.2rem, 6vw, 4.8rem);
+  line-height: 0.95;
+  letter-spacing: 0;
+}
+
+.account-page-hero p {
+  margin: 0;
+  color: #667589;
+  overflow-wrap: anywhere;
+}
+
+.account-page-panel {
+  margin-top: 16px;
 }
 
 .security-row {
@@ -1818,6 +1862,18 @@ button:disabled {
 
   .game-detail-hero {
     padding: 16px;
+  }
+
+  .account-page-hero {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 16px;
+  }
+
+  .account-page-avatar {
+    width: 72px;
+    height: 72px;
+    font-size: 1.45rem;
   }
 
   .security-row {
