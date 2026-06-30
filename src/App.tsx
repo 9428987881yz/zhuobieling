@@ -10,6 +10,7 @@ import {
 import {
   ArrowLeft,
   Check,
+  Clock3,
   CircleDot,
   Copy,
   Crown,
@@ -17,15 +18,20 @@ import {
   DoorOpen,
   Eye,
   EyeOff,
+  Flame,
   Gamepad2,
   Info,
   KeyRound,
   LogOut,
+  Medal,
   Play,
   QrCode,
   RefreshCw,
   Send,
   ShieldCheck,
+  Sparkles,
+  Table2,
+  Timer,
   Trophy,
   UserPlus,
   UserRound,
@@ -96,6 +102,8 @@ type GameDetail = {
   category: string;
   intro: string;
   highlights: string[];
+  mood: string;
+  online: number;
 };
 
 const gameCategories: GameCategory[] = [
@@ -124,29 +132,42 @@ const gameCategories: GameCategory[] = [
 const gameDetails: Record<GameType, GameDetail> = {
   undercover: {
     category: "推理派对",
+    mood: "轻推理 · 高互动",
+    online: 128,
     intro:
       "每位玩家会拿到一个词语，其中少数人拿到相近但不同的词。大家轮流描述自己的词，不能直接说出答案，最后投票找出卧底。",
     highlights: ["3-8 人开局", "轮流发言", "投票淘汰", "适合语音或文字聊天"]
   },
   gomoku: {
     category: "棋盘对弈",
+    mood: "双人对弈 · 快速开局",
+    online: 76,
     intro:
       "黑白双方轮流落子，先在横、竖或斜线上连成五子的一方获胜。每一步先选择落点，再点确认，确认前可以修改。",
     highlights: ["2 人对弈", "精准落点", "落子确认", "每步 2 分钟"]
   },
   ludo: {
     category: "轻量竞速",
+    mood: "轻松竞速 · 适合新手",
+    online: 54,
     intro:
       "玩家轮流掷骰，根据点数移动棋子，最先抵达终点的人获胜。首版采用简化规则，重点是快速开始和轻松游玩。",
     highlights: ["2-4 人", "轮流掷骰", "先到终点获胜", "超时可投票跳过"]
   },
   catan: {
     category: "策略建设",
+    mood: "资源经营 · 经典策略",
+    online: 41,
     intro:
       "在卡坦岛上采集木材、砖、羊毛、小麦和矿石，修路、建村、升级城市，最先达到 10 分的玩家获胜。",
     highlights: ["3-4 人", "资源采集", "修路建村", "经典核心规则"]
   }
 };
+
+const totalOnlinePlayers = Object.values(gameDetails).reduce(
+  (total, detail) => total + detail.online,
+  0
+);
 
 const socketUrl =
   import.meta.env.VITE_SOCKET_URL ||
@@ -784,9 +805,10 @@ export default function App() {
               <div>
                 <div className="eyebrow">
                   <Gamepad2 size={16} />
-                  在线桌游
+                  在线桌游从这里开局
                 </div>
                 <h1>{BRAND_NAME}</h1>
+                <p>注册后选择游戏、创建房间、分享 6 位房间号，朋友就能在浏览器里一起开一桌。</p>
               </div>
             </div>
             <div className="home-header-actions">
@@ -815,15 +837,37 @@ export default function App() {
             </div>
           </section>
 
+          <section className="home-metrics" aria-label="平台概况">
+            <div>
+              <Table2 size={20} />
+              <span>可玩游戏</span>
+              <strong>{Object.keys(GAME_META).length}</strong>
+            </div>
+            <div>
+              <Users size={20} />
+              <span>模拟在线</span>
+              <strong>{totalOnlinePlayers}</strong>
+            </div>
+            <div>
+              <Timer size={20} />
+              <span>每步限时</span>
+              <strong>2 分钟</strong>
+            </div>
+          </section>
+
           {notice && <NoticeBar notice={notice} />}
 
           <section className="category-list">
             {gameCategories.map((category) => (
               <div className="game-category" key={category.title}>
                 <div className="category-heading">
-                  <span className="panel-kicker">游戏类别</span>
+                  <span className="panel-kicker">游戏大厅</span>
                   <h2>{category.title}</h2>
                   <p>{category.description}</p>
+                  <div className="category-meta">
+                    <Flame size={17} />
+                    <span>{category.games.length} 个游戏可开局</span>
+                  </div>
                 </div>
                 <div className="category-games">
                   {category.games.map((type) => (
@@ -834,8 +878,16 @@ export default function App() {
                       type="button"
                     >
                       <GameGlyph type={type} />
-                      <span>{GAME_META[type].name}</span>
-                      <small>{GAME_META[type].shortDescription}</small>
+                      <div>
+                        <strong>{GAME_META[type].name}</strong>
+                        <small>{gameDetails[type].mood}</small>
+                        <div className="home-game-meta">
+                          <span>
+                            {GAME_META[type].minPlayers}-{GAME_META[type].maxPlayers} 人
+                          </span>
+                          <span>{gameDetails[type].online} 在线</span>
+                        </div>
+                      </div>
                     </button>
                   ))}
                 </div>
@@ -904,10 +956,31 @@ export default function App() {
             <span className="panel-kicker">{gameDetail.category}</span>
             <h1>{gameMeta.name}</h1>
             <p>{gameMeta.shortDescription}</p>
+            <div className="detail-stat-row">
+              <span>
+                <Users size={16} />
+                {gameDetail.online} 在线
+              </span>
+              <span>
+                <Table2 size={16} />
+                {gameMeta.minPlayers}-{gameMeta.maxPlayers} 人
+              </span>
+              <span>
+                <Timer size={16} />
+                每步 2 分钟
+              </span>
+            </div>
           </div>
         </div>
 
         <div className="create-room-box">
+          <div className="quick-room-title">
+            <Sparkles size={22} />
+            <div>
+              <strong>开一桌 {gameMeta.name}</strong>
+              <small>创建后分享房间号，好友登录后即可加入。</small>
+            </div>
+          </div>
           <div className="current-player-card">
             <span className="current-player-avatar">
               <AvatarFigure avatarUrl={profileAvatarUrl} fallback={initialOf(displayName)} />
@@ -930,12 +1003,22 @@ export default function App() {
         <div className="panel intro-panel">
           <div className="panel-heading">
             <div>
-              <span className="panel-kicker">游戏简介</span>
+              <span className="panel-kicker">规则速览</span>
               <h2>{gameMeta.name}</h2>
             </div>
             <Info size={22} />
           </div>
           <p>{gameDetail.intro}</p>
+          <div className="learning-strip">
+            <span>
+              <Clock3 size={18} />
+              新手友好，先看简介就能开局。
+            </span>
+            <span>
+              <Medal size={18} />
+              胜负记录会保存到个人资料。
+            </span>
+          </div>
           <div className="rule-strip detail-rules">
             <span>
               {gameMeta.minPlayers}-{gameMeta.maxPlayers} 人
@@ -954,8 +1037,8 @@ export default function App() {
         <div className="panel command-panel">
           <div className="panel-heading">
             <div>
-              <span className="panel-kicker">加入</span>
-              <h2>输入房间号</h2>
+              <span className="panel-kicker">房间号</span>
+              <h2>加入朋友的桌</h2>
             </div>
             <Users size={22} />
           </div>
@@ -2594,6 +2677,7 @@ function ProfilePanel({
   const wins = records.filter((record) => record.result === "win").length;
   const draws = records.filter((record) => record.result === "draw").length;
   const winRate = totalGames ? Math.round((wins / totalGames) * 100) : 0;
+  const currentAvatarPreset = getAvatarPreset(avatarUrl);
 
   return (
     <div className="profile-panel">
@@ -2604,6 +2688,9 @@ function ProfilePanel({
           </div>
           <div className="avatar-actions">
             <p className="avatar-helper">从 16 个官方头像中选择，不支持自定义上传。</p>
+            <span className="profile-current-avatar">
+              {currentAvatarPreset ? `当前头像：${currentAvatarPreset.name}` : "当前使用昵称首字"}
+            </span>
             <div className="avatar-preset-grid" role="radiogroup" aria-label="选择头像">
               {AVATAR_PRESETS.map((preset) => (
                 <button
