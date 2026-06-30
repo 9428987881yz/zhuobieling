@@ -97,6 +97,8 @@ export default function App() {
   );
 
   const displayName = (profileName || guestName || "新玩家").trim();
+  const authToken = session?.access_token;
+  const canEnterRooms = Boolean(authToken && session?.user);
   const authProfile = session?.user
     ? {
         userId: session.user.id,
@@ -147,6 +149,7 @@ export default function App() {
       !socketConnected ||
       room ||
       !initialInviteCode ||
+      !authToken ||
       autoJoinAttemptedRef.current
     ) {
       return;
@@ -157,13 +160,14 @@ export default function App() {
       code: initialInviteCode,
       playerId,
       playerName: displayName || "新玩家",
-      profile: authProfile
+      profile: authProfile,
+      authToken
     });
     setNotice({
       tone: "info",
       text: `正在加入房间 ${initialInviteCode}...`
     });
-  }, [authProfile, displayName, room, socket, socketConnected]);
+  }, [authProfile, authToken, displayName, room, socket, socketConnected]);
 
   useEffect(() => {
     if (!notice) return;
@@ -198,6 +202,14 @@ export default function App() {
     if (!session?.user || !supabase) return;
     void loadRecords(session.user.id);
   }, [session?.user?.id]);
+
+  useEffect(() => {
+    if (session?.user || !room) return;
+    socket.emit("room:leave");
+    setRoom(null);
+    localStorage.removeItem("board-room-last-room");
+    setNotice({ tone: "info", text: "已退出登录，请重新登录后再进入房间。" });
+  }, [room, session?.user, socket]);
 
   async function loadProfile(userId: string) {
     if (!supabase) return;
@@ -289,17 +301,28 @@ export default function App() {
   }
 
   function createRoom() {
+    if (!authToken || !authProfile) {
+      setNotice({ tone: "error", text: "请先注册或登录账号后再创建房间。" });
+      return;
+    }
+
     const playerName = displayName || "新玩家";
     socket.emit("room:create", {
       playerId,
       playerName,
       gameType: selectedGame,
-      profile: authProfile
+      profile: authProfile,
+      authToken
     });
   }
 
   function joinRoom(event?: FormEvent) {
     event?.preventDefault();
+    if (!authToken || !authProfile) {
+      setNotice({ tone: "error", text: "请先注册或登录账号后再加入房间。" });
+      return;
+    }
+
     const code = roomCode.trim().toUpperCase();
     if (!code) {
       setNotice({ tone: "error", text: "请输入房间号。" });
@@ -310,7 +333,8 @@ export default function App() {
       code,
       playerId,
       playerName: displayName || "新玩家",
-      profile: authProfile
+      profile: authProfile,
+      authToken
     });
   }
 
@@ -349,7 +373,7 @@ export default function App() {
             </div>
           </div>
           <p>
-            输入昵称、创建房间，把 6 位房间号发给朋友，就能在桌别零一起开一桌。
+            注册或登录账号后创建房间，把 6 位房间号发给朋友，就能在桌别零一起开一桌。
           </p>
         </div>
         <div className={socketConnected ? "status online" : "status offline"}>
@@ -387,7 +411,7 @@ export default function App() {
 
           <button className="primary-action" onClick={createRoom}>
             <DoorOpen size={20} />
-            创建新房间
+            {canEnterRooms ? "创建新房间" : "请先注册/登录"}
           </button>
         </div>
 
@@ -413,7 +437,7 @@ export default function App() {
             </label>
             <button className="secondary-action" type="submit">
               <UserPlus size={20} />
-              加入房间
+              {canEnterRooms ? "加入房间" : "请先注册/登录"}
             </button>
           </form>
         </div>
@@ -422,7 +446,7 @@ export default function App() {
           <div className="panel-heading">
             <div>
               <span className="panel-kicker">账号</span>
-              <h2>{session ? "个人资料" : "游客也能玩"}</h2>
+              <h2>{session ? "个人资料" : "注册后游玩"}</h2>
             </div>
             <KeyRound size={22} />
           </div>
@@ -1313,8 +1337,8 @@ function AuthPanel({
     <form className="auth-form" onSubmit={onSubmit}>
       <p className="hint">
         {configured
-          ? "登录后会保存昵称和战绩。"
-          : "当前未配置 Supabase，仍可用游客模式联机。"}
+          ? "必须注册或登录后才能创建、加入房间，并保存昵称和战绩。"
+          : "当前未配置 Supabase，账号系统不可用，暂时不能进入房间。"}
       </p>
       <div className="segmented">
         <button

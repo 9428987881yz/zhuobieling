@@ -141,16 +141,19 @@ app.get("*", (_req, res) => {
 });
 
 io.on("connection", (socket: SocketWithData) => {
-  socket.on("room:create", (payload: CreateRoomPayload) => {
+  socket.on("room:create", async (payload: CreateRoomPayload) => {
+    const authProfile = await requireRegisteredProfile(socket, payload);
+    if (!authProfile) return;
+
     const playerId = normalizePlayerId(payload.playerId);
     const playerName = normalizePlayerName(
-      payload.profile?.name || payload.playerName
+      authProfile.name || payload.playerName
     );
     const gameType = isGameType(payload.gameType)
       ? payload.gameType
       : "undercover";
     const code = generateRoomCode();
-    const player = createPlayer(playerId, playerName, payload.profile, true, 0);
+    const player = createPlayer(playerId, playerName, authProfile, true, 0);
     player.socketId = socket.id;
 
     const room: Room = {
@@ -171,7 +174,10 @@ io.on("connection", (socket: SocketWithData) => {
     emitRoom(room);
   });
 
-  socket.on("room:join", (payload: JoinRoomPayload) => {
+  socket.on("room:join", async (payload: JoinRoomPayload) => {
+    const authProfile = await requireRegisteredProfile(socket, payload);
+    if (!authProfile) return;
+
     const code = normalizeRoomCode(payload.code);
     const room = rooms.get(code);
     if (!room) {
@@ -181,10 +187,15 @@ io.on("connection", (socket: SocketWithData) => {
 
     const playerId = normalizePlayerId(payload.playerId);
     const playerName = normalizePlayerName(
-      payload.profile?.name || payload.playerName
+      authProfile.name || payload.playerName
     );
     const existing = room.players.find((player) => player.id === playerId);
     const meta = GAME_META[room.selectedGame];
+
+    if (existing && existing.userId !== authProfile.userId) {
+      socket.emit("error:message", "这个房间身份已经属于其他账号，请重新登录后再试。");
+      return;
+    }
 
     if (!existing && room.phase !== "lobby") {
       socket.emit("error:message", "游戏已经开始，新玩家暂时不能加入。");
@@ -201,14 +212,14 @@ io.on("connection", (socket: SocketWithData) => {
       createPlayer(
         playerId,
         playerName,
-        payload.profile,
+        authProfile,
         false,
         room.players.length
       );
 
     player.name = playerName;
-    player.userId = payload.profile?.userId;
-    player.avatarUrl = payload.profile?.avatarUrl;
+    player.userId = authProfile.userId;
+    player.avatarUrl = authProfile.avatarUrl;
     player.connected = true;
     player.socketId = socket.id;
 
@@ -358,6 +369,48 @@ function createSupabaseClient(): SupabaseClient | null {
       persistSession: false
     }
   });
+}
+
+async function requireRegisteredProfile(
+  socket: SocketWithData,
+  payload: CreateRoomPayload | JoinRoomPayload
+): Promise<(AuthProfile & { userId: string }) | null> {
+  if (!supabase) {
+    socket.emit(
+      "error:message",
+      "当前服务还没有配置账号系统，暂时不能进入房间。请先配置 Supabase。"
+    );
+    return null;
+  }
+
+  const authToken = payload.authToken?.trim();
+  if (!authToken) {
+    socket.emit("error:message", "请先注册或登录账号后再进入房间。");
+    return null;
+  }
+
+  const { data, error } = await supabase.auth.getUser(authToken);
+  const user = data.user;
+  if (error || !user) {
+    socket.emit("error:message", "登录已失效，请重新登录后再进入房间。");
+    return null;
+  }
+
+  if (payload.profile?.userId && payload.profile.userId !== user.id) {
+    socket.emit("error:message", "账号身份不一致，请重新登录后再试。");
+    return null;
+  }
+
+  const metadataName =
+    typeof user.user_metadata?.display_name === "string"
+      ? user.user_metadata.display_name
+      : "";
+  const emailName = user.email?.split("@")[0] || "";
+  return {
+    userId: user.id,
+    name: normalizePlayerName(payload.profile?.name || metadataName || emailName),
+    avatarUrl: payload.profile?.avatarUrl
+  };
 }
 
 function createPlayer(

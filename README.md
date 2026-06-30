@@ -31,7 +31,7 @@ npm start
 
 ## Supabase 账号和战绩
 
-不配置 Supabase 也能用游客模式联机玩。要启用邮箱注册、个人资料和战绩保存：
+当前版本要求玩家先注册或登录账号才能创建、加入房间，因此必须配置 Supabase Auth。配置邮箱注册、个人资料和战绩保存：
 
 1. 创建 Supabase 项目。
 2. 在 SQL Editor 执行 `supabase/schema.sql`。

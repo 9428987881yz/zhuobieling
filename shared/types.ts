@@ -148,6 +148,7 @@ export type CreateRoomPayload = {
   playerName: string;
   gameType: GameType;
   profile?: AuthProfile;
+  authToken?: string;
 };
 
 export type JoinRoomPayload = {
@@ -155,6 +156,7 @@ export type JoinRoomPayload = {
   playerId: string;
   playerName: string;
   profile?: AuthProfile;
+  authToken?: string;
 };
 
 export type RoomReadyPayload = {
