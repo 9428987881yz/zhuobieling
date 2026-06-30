@@ -169,6 +169,135 @@ button:disabled {
   letter-spacing: 0;
 }
 
+.home-header-actions {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.home-account-menu {
+  position: relative;
+}
+
+.account-avatar-button {
+  display: inline-grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  color: var(--brand-ink);
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-radius: 50%;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.1);
+}
+
+.account-avatar-button.signed-in {
+  color: #fff;
+  background: var(--brand-ink);
+  border-color: var(--brand-ink);
+}
+
+.account-avatar-button span {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  font-weight: 900;
+  font-size: 1.05rem;
+}
+
+.account-dropdown {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 10px);
+  right: 0;
+  display: grid;
+  gap: 6px;
+  width: 238px;
+  padding: 10px;
+  background: #fff;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  box-shadow: 0 22px 55px rgba(15, 23, 42, 0.16);
+}
+
+.account-dropdown-head {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 4px 4px 8px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.account-dropdown-head strong,
+.account-dropdown-head small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-dropdown-head small {
+  color: #667589;
+}
+
+.account-dropdown button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 8px;
+  color: #152033;
+  text-align: left;
+  background: #fff;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-weight: 900;
+}
+
+.account-dropdown button:hover {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+}
+
+.account-dropdown button.danger {
+  color: #b91c1c;
+}
+
+.home-account-panel {
+  margin-top: 14px;
+}
+
+.security-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.security-row {
+  display: grid;
+  grid-template-columns: minmax(96px, 0.35fr) minmax(0, 1fr);
+  gap: 12px;
+  min-height: 46px;
+  align-items: center;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.security-row span {
+  color: #667589;
+  font-weight: 900;
+}
+
+.security-row strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .category-list {
   display: grid;
   gap: 6px;
@@ -1648,6 +1777,20 @@ button:disabled {
     padding: 16px 0 12px;
   }
 
+  .home-header-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .home-account-menu {
+    margin-left: auto;
+  }
+
+  .account-dropdown {
+    right: 0;
+    width: min(280px, calc(100vw - 36px));
+  }
+
   .room-actions,
   .panel-heading,
   .game-title-row,
@@ -1675,6 +1818,11 @@ button:disabled {
 
   .game-detail-hero {
     padding: 16px;
+  }
+
+  .security-row {
+    grid-template-columns: 1fr;
+    gap: 5px;
   }
 
   .brand-mark {

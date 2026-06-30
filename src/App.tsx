@@ -24,7 +24,9 @@ import {
   QrCode,
   RefreshCw,
   Send,
+  ShieldCheck,
   UserPlus,
+  UserRound,
   Users,
   Wifi,
   WifiOff
@@ -62,6 +64,8 @@ type GameRecord = {
   room_code: string;
   created_at: string;
 };
+
+type AccountPanelView = "details" | "security" | null;
 
 type GameCategory = {
   title: string;
@@ -212,6 +216,8 @@ export default function App() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [records, setRecords] = useState<GameRecord[]>([]);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [accountPanelView, setAccountPanelView] = useState<AccountPanelView>(null);
 
   const socket = useMemo(
     () =>
@@ -498,6 +504,7 @@ export default function App() {
   function openGame(gameType: GameType) {
     setSelectedGame(gameType);
     setActiveGame(gameType);
+    setAccountMenuOpen(false);
   }
 
   function returnHome() {
@@ -532,13 +539,57 @@ export default function App() {
               <h1>{BRAND_NAME}</h1>
             </div>
           </div>
-          <div className={socketConnected ? "status online" : "status offline"}>
-            {socketConnected ? <Wifi size={18} /> : <WifiOff size={18} />}
-            {socketConnected ? "服务器已连接" : "连接中"}
+          <div className="home-header-actions">
+            <div className={socketConnected ? "status online" : "status offline"}>
+              {socketConnected ? <Wifi size={18} /> : <WifiOff size={18} />}
+              {socketConnected ? "服务器已连接" : "连接中"}
+            </div>
+            <HomeAccountMenu
+              displayName={displayName}
+              email={session?.user.email || ""}
+              isSignedIn={Boolean(session?.user)}
+              menuOpen={accountMenuOpen}
+              onToggle={() => setAccountMenuOpen((open) => !open)}
+              onSelect={(view) => {
+                setAccountPanelView(view);
+                setAccountMenuOpen(false);
+              }}
+              onSignOut={() => {
+                setAccountMenuOpen(false);
+                setAccountPanelView(null);
+                void supabase?.auth.signOut();
+              }}
+            />
           </div>
         </section>
 
         {notice && <NoticeBar notice={notice} />}
+
+        {accountPanelView && (
+          <HomeAccountPanel
+            view={accountPanelView}
+            configured={isSupabaseConfigured}
+            session={session}
+            displayName={profileName || guestName}
+            email={email}
+            password={password}
+            records={records}
+            authMode={authMode}
+            onClose={() => setAccountPanelView(null)}
+            onNameChange={setProfileName}
+            onProfileSave={() =>
+              session?.user && void upsertProfile(session.user.id, profileName)
+            }
+            onSignOut={() => {
+              setAccountPanelView(null);
+              void supabase?.auth.signOut();
+            }}
+            onAuthModeChange={setAuthMode}
+            onEmailChange={setEmail}
+            onPasswordChange={setPassword}
+            onAuthSubmit={handleAuth}
+          />
+        )}
 
         <section className="category-list">
           {gameCategories.map((category) => (
@@ -1840,6 +1891,160 @@ function SkipVotePanel({
         </button>
       </div>
     </div>
+  );
+}
+
+function HomeAccountMenu({
+  displayName,
+  email,
+  isSignedIn,
+  menuOpen,
+  onToggle,
+  onSelect,
+  onSignOut
+}: {
+  displayName: string;
+  email: string;
+  isSignedIn: boolean;
+  menuOpen: boolean;
+  onToggle: () => void;
+  onSelect: (view: Exclude<AccountPanelView, null>) => void;
+  onSignOut: () => void;
+}) {
+  return (
+    <div className="home-account-menu">
+      <button
+        className={isSignedIn ? "account-avatar-button signed-in" : "account-avatar-button"}
+        type="button"
+        aria-expanded={menuOpen}
+        onClick={onToggle}
+      >
+        {isSignedIn ? (
+          <span>{initialOf(displayName)}</span>
+        ) : (
+          <UserRound size={20} />
+        )}
+      </button>
+
+      {menuOpen && (
+        <div className="account-dropdown">
+          <div className="account-dropdown-head">
+            <strong>{isSignedIn ? displayName : "未登录"}</strong>
+            <small>{isSignedIn ? email : "登录后可创建和加入房间"}</small>
+          </div>
+          <button type="button" onClick={() => onSelect("details")}>
+            <UserRound size={18} />
+            详细资料
+          </button>
+          <button type="button" onClick={() => onSelect("security")}>
+            <ShieldCheck size={18} />
+            账号安全
+          </button>
+          {isSignedIn && (
+            <button className="danger" type="button" onClick={onSignOut}>
+              <LogOut size={18} />
+              退出登录
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HomeAccountPanel({
+  view,
+  configured,
+  session,
+  displayName,
+  email,
+  password,
+  records,
+  authMode,
+  onClose,
+  onNameChange,
+  onProfileSave,
+  onSignOut,
+  onAuthModeChange,
+  onEmailChange,
+  onPasswordChange,
+  onAuthSubmit
+}: {
+  view: Exclude<AccountPanelView, null>;
+  configured: boolean;
+  session: Session | null;
+  displayName: string;
+  email: string;
+  password: string;
+  records: GameRecord[];
+  authMode: "signin" | "signup";
+  onClose: () => void;
+  onNameChange: (value: string) => void;
+  onProfileSave: () => void;
+  onSignOut: () => void;
+  onAuthModeChange: (mode: "signin" | "signup") => void;
+  onEmailChange: (value: string) => void;
+  onPasswordChange: (value: string) => void;
+  onAuthSubmit: (event: FormEvent) => void;
+}) {
+  return (
+    <section className="panel home-account-panel">
+      <div className="panel-heading">
+        <div>
+          <span className="panel-kicker">账号中心</span>
+          <h2>{view === "details" ? "详细资料" : "账号安全"}</h2>
+        </div>
+        <button className="icon-text-button" type="button" onClick={onClose}>
+          关闭
+        </button>
+      </div>
+
+      {session ? (
+        view === "details" ? (
+          <ProfilePanel
+            name={displayName}
+            email={session.user.email || ""}
+            records={records}
+            onNameChange={onNameChange}
+            onSave={onProfileSave}
+            onSignOut={onSignOut}
+          />
+        ) : (
+          <div className="security-panel">
+            <div className="security-row">
+              <span>登录邮箱</span>
+              <strong>{session.user.email || "未绑定邮箱"}</strong>
+            </div>
+            <div className="security-row">
+              <span>登录保护</span>
+              <strong>密码输错 6 次，当天不能再登录</strong>
+            </div>
+            <div className="security-row">
+              <span>账号状态</span>
+              <strong>已登录，创建和加入房间已开启</strong>
+            </div>
+            <p className="hint">
+              为了保护账号，密码不会显示在网页里。忘记密码时，后续可以接 Supabase 邮件重置流程。
+            </p>
+            <button className="icon-text-button danger" type="button" onClick={onSignOut}>
+              <LogOut size={18} />
+              退出登录
+            </button>
+          </div>
+        )
+      ) : (
+        <AuthPanel
+          configured={configured}
+          mode={authMode}
+          email={email}
+          password={password}
+          onModeChange={onAuthModeChange}
+          onEmailChange={onEmailChange}
+          onPasswordChange={onPasswordChange}
+          onSubmit={onAuthSubmit}
+        />
+      )}
+    </section>
   );
 }
 
