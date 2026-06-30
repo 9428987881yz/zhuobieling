@@ -1088,6 +1088,230 @@ button:disabled {
   font-size: 0.72rem;
 }
 
+.catan-layout {
+  gap: 14px;
+}
+
+.catan-board-wrap {
+  overflow: hidden;
+  background: #dff4ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+}
+
+.catan-board {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1.45;
+  min-height: 430px;
+  touch-action: manipulation;
+}
+
+.catan-hex {
+  stroke: #fff;
+  stroke-width: 0.035;
+  cursor: pointer;
+}
+
+.terrain-forest {
+  fill: #4d9f69;
+}
+
+.terrain-hill {
+  fill: #c56b3f;
+}
+
+.terrain-pasture {
+  fill: #9fd36f;
+}
+
+.terrain-field {
+  fill: #f2c94c;
+}
+
+.terrain-mountain {
+  fill: #9aa4b2;
+}
+
+.terrain-desert {
+  fill: #e6c98f;
+}
+
+.catan-hex-label,
+.catan-number,
+.catan-robber {
+  pointer-events: none;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  font-weight: 900;
+}
+
+.catan-hex-label {
+  fill: #17324a;
+  font-size: 0.23px;
+}
+
+.catan-number {
+  fill: #102338;
+  font-size: 0.34px;
+}
+
+.catan-number.hot {
+  fill: #b91c1c;
+}
+
+.catan-robber {
+  fill: #0f172a;
+  font-size: 0.22px;
+}
+
+.catan-road {
+  stroke: rgba(15, 23, 42, 0.18);
+  stroke-width: 0.07;
+  stroke-linecap: round;
+  cursor: pointer;
+}
+
+.catan-road.owned {
+  stroke-width: 0.12;
+}
+
+.catan-road-hit {
+  stroke: transparent;
+  stroke-width: 0.28;
+  cursor: pointer;
+}
+
+.catan-vertex {
+  fill: #fff;
+  stroke: #38546d;
+  stroke-width: 0.035;
+  cursor: pointer;
+}
+
+.catan-vertex-hit {
+  fill: transparent;
+  cursor: pointer;
+}
+
+.catan-building {
+  stroke: #fff;
+  stroke-width: 0.045;
+  cursor: pointer;
+}
+
+.catan-building.city {
+  stroke-width: 0.065;
+}
+
+.catan-action-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 12px;
+}
+
+.catan-resource-panel,
+.catan-control-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.resource-chips {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.resource-chips span {
+  display: grid;
+  gap: 4px;
+  place-items: center;
+  min-height: 56px;
+  color: #526173;
+  background: #fff;
+  border: 1px solid #dbe4ee;
+  border-radius: 8px;
+  font-weight: 900;
+}
+
+.resource-chips strong {
+  color: var(--brand-ink);
+  font-size: 1.15rem;
+}
+
+.catan-resource-panel small {
+  color: #526173;
+  line-height: 1.5;
+}
+
+.catan-dice-panel {
+  grid-template-columns: minmax(0, 1fr) 84px;
+}
+
+.bank-trade-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) minmax(120px, auto);
+  gap: 8px;
+  align-items: center;
+}
+
+.bank-trade-row select {
+  min-height: 44px;
+  padding: 0 10px;
+  color: #152033;
+  background: #fff;
+  border: 1px solid #d6dee9;
+  border-radius: 8px;
+  font-weight: 800;
+}
+
+.bank-trade-row .secondary-action {
+  margin-top: 0;
+  white-space: nowrap;
+}
+
+.catan-score-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.catan-score-card {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  background: #fff;
+  border: 1px solid #dbe4ee;
+  border-radius: 8px;
+}
+
+.catan-score-card > span {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  color: #fff;
+  border-radius: 999px;
+  font-weight: 900;
+}
+
+.catan-score-card strong,
+.catan-score-card small {
+  display: block;
+  min-width: 0;
+}
+
+.catan-score-card small {
+  color: #526173;
+  font-weight: 800;
+}
+
 .race-list {
   display: grid;
   gap: 10px;
@@ -1199,6 +1423,20 @@ button:disabled {
 
   .turn-confirm-panel {
     grid-template-columns: 1fr;
+  }
+
+  .catan-board {
+    min-height: 320px;
+  }
+
+  .catan-action-grid,
+  .catan-score-grid,
+  .bank-trade-row {
+    grid-template-columns: 1fr;
+  }
+
+  .resource-chips {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .skip-vote-panel,

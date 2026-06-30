@@ -33,6 +33,9 @@ import { io, Socket } from "socket.io-client";
 import type { Session } from "@supabase/supabase-js";
 import {
   GAME_META,
+  CatanPublicState,
+  CatanResource,
+  CatanTerrain,
   GameType,
   GomokuPublicState,
   LudoPublicState,
@@ -703,6 +706,17 @@ function GameSurface({
     );
   }
 
+  if (gameState.type === "catan") {
+    return (
+      <CatanGame
+        room={room}
+        state={gameState}
+        playerId={playerId}
+        socket={socket}
+      />
+    );
+  }
+
   return (
     <LudoGame
       room={room}
@@ -1262,6 +1276,289 @@ function PlayerRow({ player, isMe }: { player: Player; isMe: boolean }) {
   );
 }
 
+function CatanGame({
+  room,
+  state,
+  playerId,
+  socket
+}: {
+  room: RoomView;
+  state: CatanPublicState;
+  playerId: string;
+  socket: Socket;
+}) {
+  const [tradeGive, setTradeGive] = useState<CatanResource>("wood");
+  const [tradeReceive, setTradeReceive] = useState<CatanResource>("brick");
+  const current = room.players.find((player) => player.id === state.currentPlayerId);
+  const winner = room.players.find((player) => player.id === state.winnerId);
+  const myState = state.playerStates[playerId];
+  const isMyTurn = state.currentPlayerId === playerId && !state.skipVote;
+  const timeLeftMs = useCountdown(state.turnEndsAt);
+  const timePercent = state.turnDurationMs
+    ? Math.max(0, Math.min(100, (timeLeftMs / state.turnDurationMs) * 100))
+    : 0;
+  const viewBox = catanViewBox(state);
+
+  function handleHexClick(hexId: string) {
+    if (!isMyTurn || !state.needsRobberMove) return;
+    socket.emit("game:action", { type: "catan:move-robber", hexId });
+  }
+
+  function handleVertexClick(vertexId: string) {
+    if (!isMyTurn) return;
+    const vertex = state.vertices.find((entry) => entry.id === vertexId);
+    if (!vertex?.building) {
+      socket.emit("game:action", { type: "catan:place-settlement", vertexId });
+      return;
+    }
+
+    if (
+      state.phase === "playing" &&
+      state.hasRolled &&
+      !state.needsRobberMove &&
+      vertex.building.playerId === playerId &&
+      vertex.building.kind === "settlement"
+    ) {
+      socket.emit("game:action", { type: "catan:upgrade-city", vertexId });
+    }
+  }
+
+  function handleEdgeClick(edgeId: string) {
+    if (!isMyTurn) return;
+    socket.emit("game:action", { type: "catan:place-road", edgeId });
+  }
+
+  return (
+    <div className="game-layout catan-layout">
+      <div className="game-title-row">
+        <div>
+          <span className="panel-kicker">
+            {state.phase === "setup" ? "开局放置" : "经典核心版"}
+          </span>
+          <h2>卡坦岛</h2>
+        </div>
+        <span className="stage-pill">
+          {winner
+            ? `${winner.name} 胜利`
+            : state.phase === "setup"
+              ? `${current?.name || "等待"} 放${state.setupPhase === "road" ? "道路" : "村庄"}`
+              : `轮到 ${current?.name || "等待"}`}
+        </span>
+      </div>
+
+      {state.resultReason && <p className="result-line">{state.resultReason}</p>}
+
+      {state.skipVote ? (
+        <SkipVotePanel
+          room={room}
+          playerId={playerId}
+          socket={socket}
+          skipVote={state.skipVote}
+        />
+      ) : (
+        <div className="turn-confirm-panel">
+          <div className="timer-card">
+            <span>本步剩余</span>
+            <strong>{formatDuration(timeLeftMs)}</strong>
+            <div className="timer-track">
+              <i style={{ width: `${timePercent}%` }} />
+            </div>
+          </div>
+          <div className="move-confirm-card">
+            <span>
+              {state.phase === "setup"
+                ? "按提示在地图交点放村庄，再点相邻边放道路。"
+                : state.needsRobberMove
+                  ? "掷出 7，请点击一个地形块移动盗贼。"
+                  : state.hasRolled
+                    ? "点击地图边修路，点击空交点建村，点击自己的村庄升级城市。"
+                    : "先掷骰，获得资源后再建造。"}
+            </span>
+          </div>
+        </div>
+      )}
+
+      <div className="catan-board-wrap">
+        <svg className="catan-board" viewBox={viewBox}>
+          {state.hexes.map((hex) => (
+            <g key={hex.id} onClick={() => handleHexClick(hex.id)}>
+              <polygon
+                className={`catan-hex terrain-${hex.terrain}`}
+                points={catanPolygonPoints(hex.x, hex.y)}
+              />
+              <text className="catan-hex-label" x={hex.x} y={hex.y - 0.18}>
+                {terrainLabel(hex.terrain)}
+              </text>
+              {hex.number && (
+                <text
+                  className={
+                    hex.number === 6 || hex.number === 8
+                      ? "catan-number hot"
+                      : "catan-number"
+                  }
+                  x={hex.x}
+                  y={hex.y + 0.28}
+                >
+                  {hex.number}
+                </text>
+              )}
+              {state.robberHexId === hex.id && (
+                <text className="catan-robber" x={hex.x} y={hex.y + 0.74}>
+                  盗贼
+                </text>
+              )}
+            </g>
+          ))}
+
+          {state.edges.map((edge) => {
+            const owner = room.players.find((player) => player.id === edge.roadOwnerId);
+            return (
+              <g key={edge.id} onClick={() => handleEdgeClick(edge.id)}>
+                <line
+                  className={edge.roadOwnerId ? "catan-road owned" : "catan-road"}
+                  x1={edge.x1}
+                  y1={edge.y1}
+                  x2={edge.x2}
+                  y2={edge.y2}
+                  style={edge.roadOwnerId ? { stroke: owner?.color } : undefined}
+                />
+                <line
+                  className="catan-road-hit"
+                  x1={edge.x1}
+                  y1={edge.y1}
+                  x2={edge.x2}
+                  y2={edge.y2}
+                />
+              </g>
+            );
+          })}
+
+          {state.vertices.map((vertex) => {
+            const owner = room.players.find(
+              (player) => player.id === vertex.building?.playerId
+            );
+            return (
+              <g key={vertex.id} onClick={() => handleVertexClick(vertex.id)}>
+                <circle
+                  className={
+                    vertex.building
+                      ? `catan-building ${vertex.building.kind}`
+                      : "catan-vertex"
+                  }
+                  cx={vertex.x}
+                  cy={vertex.y}
+                  r={vertex.building?.kind === "city" ? 0.18 : 0.13}
+                  style={vertex.building ? { fill: owner?.color } : undefined}
+                />
+                <circle className="catan-vertex-hit" cx={vertex.x} cy={vertex.y} r={0.26} />
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+
+      <div className="catan-action-grid">
+        <div className="catan-resource-panel">
+          <span className="panel-kicker">我的资源</span>
+          <div className="resource-chips">
+            {catanResourceOrder.map((resource) => (
+              <span key={resource}>
+                {resourceLabel(resource)}
+                <strong>{myState?.resources[resource] || 0}</strong>
+              </span>
+            ))}
+          </div>
+          <small>
+            修路：木+砖；建村：木+砖+羊+麦；城市：2 麦+3 矿。
+          </small>
+        </div>
+
+        <div className="catan-control-panel">
+          <div className="dice-panel catan-dice-panel">
+            <button
+              className="primary-action"
+              disabled={!isMyTurn || state.phase !== "playing" || state.hasRolled}
+              onClick={() => socket.emit("game:action", { type: "catan:roll" })}
+            >
+              <Dice6 size={20} />
+              掷骰
+            </button>
+            <strong>{state.lastRoll ? state.lastRoll.total : "-"}</strong>
+          </div>
+
+          <div className="bank-trade-row">
+            <select
+              value={tradeGive}
+              onChange={(event) => setTradeGive(event.target.value as CatanResource)}
+            >
+              {catanResourceOrder.map((resource) => (
+                <option key={resource} value={resource}>
+                  {resourceLabel(resource)}
+                </option>
+              ))}
+            </select>
+            <span>换</span>
+            <select
+              value={tradeReceive}
+              onChange={(event) => setTradeReceive(event.target.value as CatanResource)}
+            >
+              {catanResourceOrder.map((resource) => (
+                <option key={resource} value={resource}>
+                  {resourceLabel(resource)}
+                </option>
+              ))}
+            </select>
+            <button
+              className="secondary-action"
+              disabled={!isMyTurn || state.phase !== "playing" || !state.hasRolled}
+              onClick={() =>
+                socket.emit("game:action", {
+                  type: "catan:bank-trade",
+                  give: tradeGive,
+                  receive: tradeReceive
+                })
+              }
+            >
+              4:1 交换
+            </button>
+          </div>
+
+          <button
+            className="secondary-action"
+            disabled={
+              !isMyTurn ||
+              state.phase !== "playing" ||
+              !state.hasRolled ||
+              state.needsRobberMove
+            }
+            onClick={() => socket.emit("game:action", { type: "catan:end-turn" })}
+          >
+            结束回合
+          </button>
+        </div>
+      </div>
+
+      <div className="catan-score-grid">
+        {room.players.map((player) => {
+          const playerState = state.playerStates[player.id];
+          return (
+            <div className="catan-score-card" key={player.id}>
+              <span style={{ background: player.color }}>{initialOf(player.name)}</span>
+              <div>
+                <strong>{player.name}</strong>
+                <small>
+                  {playerState?.victoryPoints || 0} 分 · 路 {playerState?.roads || 0} · 村{" "}
+                  {playerState?.settlements || 0} · 城 {playerState?.cities || 0}
+                </small>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function SkipVotePanel({
   room,
   playerId,
@@ -1464,6 +1761,58 @@ function normalizeRoomCode(value: string) {
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "")
     .slice(0, 6);
+}
+
+const catanResourceOrder: CatanResource[] = ["wood", "brick", "sheep", "wheat", "ore"];
+
+function resourceLabel(resource: CatanResource) {
+  const labels: Record<CatanResource, string> = {
+    wood: "木",
+    brick: "砖",
+    sheep: "羊",
+    wheat: "麦",
+    ore: "矿"
+  };
+  return labels[resource];
+}
+
+function terrainLabel(terrain: CatanTerrain) {
+  const labels: Record<CatanTerrain, string> = {
+    forest: "森林",
+    hill: "丘陵",
+    pasture: "牧场",
+    field: "麦田",
+    mountain: "山地",
+    desert: "沙漠"
+  };
+  return labels[terrain];
+}
+
+function catanPolygonPoints(x: number, y: number) {
+  return Array.from({ length: 6 }, (_, index) => {
+    const angle = (Math.PI / 180) * (30 + 60 * index);
+    return `${roundViewCoord(x + Math.cos(angle))},${roundViewCoord(y + Math.sin(angle))}`;
+  }).join(" ");
+}
+
+function catanViewBox(state: CatanPublicState) {
+  const xs = [
+    ...state.hexes.map((hex) => hex.x),
+    ...state.vertices.map((vertex) => vertex.x)
+  ];
+  const ys = [
+    ...state.hexes.map((hex) => hex.y),
+    ...state.vertices.map((vertex) => vertex.y)
+  ];
+  const minX = Math.min(...xs) - 0.7;
+  const maxX = Math.max(...xs) + 0.7;
+  const minY = Math.min(...ys) - 0.7;
+  const maxY = Math.max(...ys) + 0.7;
+  return `${minX} ${minY} ${maxX - minX} ${maxY - minY}`;
+}
+
+function roundViewCoord(value: number) {
+  return Math.round(value * 1000) / 1000;
 }
 
 function useCountdown(endsAt?: number) {

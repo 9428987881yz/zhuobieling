@@ -8,6 +8,13 @@ import { Server, Socket } from "socket.io";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import {
   AuthProfile,
+  CatanEdge,
+  CatanHex,
+  CatanPlayerState,
+  CatanPublicState,
+  CatanResource,
+  CatanTerrain,
+  CatanVertex,
   ChatMessage,
   ChatPayload,
   CreateRoomPayload,
@@ -50,10 +57,13 @@ type LudoInternalState = LudoPublicState & {
   turnIndex: number;
 };
 
+type CatanInternalState = CatanPublicState;
+
 type InternalGameState =
   | UndercoverInternalState
   | GomokuPublicState
-  | LudoInternalState;
+  | LudoInternalState
+  | CatanInternalState;
 
 type Room = {
   code: string;
@@ -119,6 +129,46 @@ const undercoverWordPairs = [
   ["电影", "电视剧"],
   ["雨伞", "帽子"]
 ] as const;
+
+const catanTerrainBag: CatanTerrain[] = [
+  "forest",
+  "forest",
+  "forest",
+  "forest",
+  "pasture",
+  "pasture",
+  "pasture",
+  "pasture",
+  "field",
+  "field",
+  "field",
+  "field",
+  "hill",
+  "hill",
+  "hill",
+  "mountain",
+  "mountain",
+  "mountain",
+  "desert"
+];
+
+const catanNumberTokens = [5, 2, 6, 3, 8, 10, 9, 12, 11, 4, 8, 10, 9, 4, 5, 6, 3, 11];
+
+const catanTerrainResource: Partial<Record<CatanTerrain, CatanResource>> = {
+  forest: "wood",
+  hill: "brick",
+  pasture: "sheep",
+  field: "wheat",
+  mountain: "ore"
+};
+
+const catanBuildCosts: Record<"road" | "settlement" | "city", Partial<Record<CatanResource, number>>> = {
+  road: { wood: 1, brick: 1 },
+  settlement: { wood: 1, brick: 1, sheep: 1, wheat: 1 },
+  city: { wheat: 2, ore: 3 }
+};
+
+const catanResources: CatanResource[] = ["wood", "brick", "sheep", "wheat", "ore"];
 
 app.get("/api/health", (_req, res) => {
   res.json({
@@ -513,7 +563,8 @@ function validateStart(room: Room): { ok: true } | { ok: false; message: string 
 function createInitialGameState(room: Room): InternalGameState {
   if (room.selectedGame === "undercover") return createUndercoverState(room);
   if (room.selectedGame === "gomoku") return createGomokuState(room);
-  return createLudoState(room);
+  if (room.selectedGame === "ludo") return createLudoState(room);
+  return createCatanState(room);
 }
 
 function createUndercoverState(room: Room): UndercoverInternalState {
@@ -583,6 +634,146 @@ function createLudoState(room: Room): LudoInternalState {
   };
 }
 
+function createCatanState(room: Room): CatanInternalState {
+  const { hexes, vertices, edges } = createCatanBoard();
+  const setupOrder = [
+    ...room.players.map((player) => player.id),
+    ...room.players.map((player) => player.id).reverse()
+  ];
+  const playerStates = Object.fromEntries(
+    room.players.map((player) => [player.id, createCatanPlayerState()])
+  );
+  const robberHex = hexes.find((hex) => hex.terrain === "desert") || hexes[0];
+
+  return {
+    type: "catan",
+    phase: "setup",
+    hexes,
+    vertices,
+    edges,
+    currentPlayerId: setupOrder[0],
+    turnDurationMs: GAME_STEP_MS,
+    turnEndsAt: Date.now() + GAME_STEP_MS,
+    setupPhase: "settlement",
+    setupRound: 1,
+    setupOrder,
+    setupIndex: 0,
+    hasRolled: false,
+    needsRobberMove: false,
+    robberHexId: robberHex.id,
+    playerStates
+  };
+}
+
+function createCatanPlayerState(): CatanPlayerState {
+  return {
+    resources: { wood: 0, brick: 0, sheep: 0, wheat: 0, ore: 0 },
+    roads: 0,
+    settlements: 0,
+    cities: 0,
+    victoryPoints: 0
+  };
+}
+
+function createCatanBoard() {
+  const coords: Array<[number, number]> = [];
+  for (let r = -2; r <= 2; r += 1) {
+    for (let q = -2; q <= 2; q += 1) {
+      if (Math.abs(q + r) <= 2) coords.push([q, r]);
+    }
+  }
+
+  const terrainBag = shuffle([...catanTerrainBag]);
+  const tokenQueue = [...catanNumberTokens];
+  const hexes: CatanHex[] = coords.map(([q, r], index) => {
+    const terrain = terrainBag[index];
+    const resource = catanTerrainResource[terrain];
+    const center = catanHexCenter(q, r);
+    return {
+      id: `h${index}`,
+      q,
+      r,
+      x: center.x,
+      y: center.y,
+      terrain,
+      resource,
+      number: terrain === "desert" ? undefined : tokenQueue.shift()
+    };
+  });
+
+  const vertexMap = new Map<string, CatanVertex>();
+  const edgeMap = new Map<string, CatanEdge>();
+  hexes.forEach((hex) => {
+    const corners = catanCorners(hex.x, hex.y);
+    const vertexIds = corners.map((corner) => {
+      const key = coordKey(corner.x, corner.y);
+      const existing = vertexMap.get(key);
+      if (existing) {
+        existing.adjacentHexIds.push(hex.id);
+        return existing.id;
+      }
+
+      const vertex: CatanVertex = {
+        id: `v${vertexMap.size}`,
+        x: roundCoord(corner.x),
+        y: roundCoord(corner.y),
+        adjacentHexIds: [hex.id]
+      };
+      vertexMap.set(key, vertex);
+      return vertex.id;
+    });
+
+    for (let index = 0; index < 6; index += 1) {
+      const a = vertexIds[index];
+      const b = vertexIds[(index + 1) % 6];
+      const edgeKey = [a, b].sort().join("-");
+      if (!edgeMap.has(edgeKey)) {
+        const v1 = Array.from(vertexMap.values()).find((vertex) => vertex.id === a)!;
+        const v2 = Array.from(vertexMap.values()).find((vertex) => vertex.id === b)!;
+        edgeMap.set(edgeKey, {
+          id: `e${edgeMap.size}`,
+          vertexIds: [a, b],
+          x1: v1.x,
+          y1: v1.y,
+          x2: v2.x,
+          y2: v2.y
+        });
+      }
+    }
+  });
+
+  return {
+    hexes,
+    vertices: Array.from(vertexMap.values()),
+    edges: Array.from(edgeMap.values())
+  };
+}
+
+function catanHexCenter(q: number, r: number) {
+  return {
+    x: roundCoord(Math.sqrt(3) * (q + r / 2)),
+    y: roundCoord(1.5 * r)
+  };
+}
+
+function catanCorners(x: number, y: number) {
+  return Array.from({ length: 6 }, (_, index) => {
+    const angle = (Math.PI / 180) * (30 + 60 * index);
+    return {
+      x: x + Math.cos(angle),
+      y: y + Math.sin(angle)
+    };
+  });
+}
+
+function roundCoord(value: number) {
+  return Math.round(value * 1000) / 1000;
+}
+
+function coordKey(x: number, y: number) {
+  return `${roundCoord(x)}:${roundCoord(y)}`;
+}
+
 function applyGameAction(
   room: Room,
   player: InternalPlayer,
@@ -607,7 +798,11 @@ function applyGameAction(
     return applyGomokuAction(room, state, player, payload);
   }
 
-  return applyLudoAction(room, state, player, payload);
+  if (state.type === "ludo") {
+    return applyLudoAction(room, state, player, payload);
+  }
+
+  return applyCatanAction(room, state, player, payload);
 }
 
 function applySkipVote(
@@ -689,6 +884,11 @@ function skipTimedOutPlayer(
 
   if (state.type === "gomoku") {
     skipGomokuTurn(room, state, targetPlayerId, `大家同意跳过 ${targetName} 的本手。`);
+    return;
+  }
+
+  if (state.type === "catan") {
+    skipCatanTurn(room, state, targetPlayerId);
     return;
   }
 
@@ -1013,6 +1213,13 @@ function scheduleGameStepTimer(room: Room) {
     return;
   }
 
+  if (
+    state.type === "catan" &&
+    (!state.currentPlayerId || state.phase === "ended")
+  ) {
+    return;
+  }
+
   const expectedPlayerId =
     state.type === "undercover" ? state.currentSpeakerId : state.currentPlayerId;
   const expectedStage = state.type === "undercover" ? state.stage : undefined;
@@ -1042,7 +1249,7 @@ function scheduleGameStepTimer(room: Room) {
       }
       resolveUndercoverTimeout(currentRoom, currentState);
       scheduleGameStepTimer(currentRoom);
-    } else {
+    } else if (currentState.type === "ludo") {
       if (
         currentState.currentPlayerId !== expectedPlayerId ||
         !isLudoTurnExpired(currentState)
@@ -1050,6 +1257,14 @@ function scheduleGameStepTimer(room: Room) {
         return;
       }
       startLudoSkipVote(currentRoom, currentState);
+    } else {
+      if (
+        currentState.currentPlayerId !== expectedPlayerId ||
+        !isCatanStepExpired(currentState)
+      ) {
+        return;
+      }
+      startCatanSkipVote(currentRoom, currentState);
     }
 
     void snapshotRoom(currentRoom);
@@ -1174,6 +1389,418 @@ function skipLudoTurn(
   state.currentPlayerId = state.order[state.turnIndex];
   state.turnEndsAt = Date.now() + GAME_STEP_MS;
   state.turnCount += 1;
+}
+
+function applyCatanAction(
+  room: Room,
+  state: CatanInternalState,
+  player: InternalPlayer,
+  payload: GameActionPayload
+): string | null {
+  if (state.phase === "ended") return "本局已经结束。";
+  if (isCatanStepExpired(state)) {
+    startCatanSkipVote(room, state);
+    return null;
+  }
+  if (state.currentPlayerId !== player.id) return "还没轮到你。";
+
+  if (state.phase === "setup") {
+    if (payload.type === "catan:place-settlement") {
+      return placeCatanSetupSettlement(state, player.id, payload.vertexId);
+    }
+
+    if (payload.type === "catan:place-road") {
+      return placeCatanSetupRoad(state, player.id, payload.edgeId);
+    }
+
+    return "开局阶段需要先放村庄，再放道路。";
+  }
+
+  if (payload.type === "catan:roll") {
+    if (state.hasRolled) return "本回合已经掷过骰子。";
+    const dice: [number, number] = [randomInt(6) + 1, randomInt(6) + 1];
+    const total = dice[0] + dice[1];
+    state.lastRoll = { dice, total };
+    state.hasRolled = true;
+    if (total === 7) {
+      state.needsRobberMove = true;
+      state.resultReason = "掷出 7，请把盗贼移动到一个地形块。";
+      refreshCatanStep(state);
+      return null;
+    }
+
+    produceCatanResources(state, total);
+    state.resultReason = `掷出 ${total}，相邻村庄和城市获得资源。`;
+    refreshCatanStep(state);
+    return null;
+  }
+
+  if (!state.hasRolled) return "请先掷骰。";
+
+  if (payload.type === "catan:move-robber") {
+    if (!state.needsRobberMove) return "现在不需要移动盗贼。";
+    if (!state.hexes.some((hex) => hex.id === payload.hexId)) return "地形块不存在。";
+    state.robberHexId = payload.hexId;
+    state.needsRobberMove = false;
+    state.resultReason = "盗贼已经移动，本回合可以继续建造或结束。";
+    refreshCatanStep(state);
+    return null;
+  }
+
+  if (state.needsRobberMove) return "请先移动盗贼。";
+
+  if (payload.type === "catan:place-road") {
+    return buildCatanRoad(state, player.id, payload.edgeId, false);
+  }
+
+  if (payload.type === "catan:place-settlement") {
+    return buildCatanSettlement(room, state, player.id, payload.vertexId, false);
+  }
+
+  if (payload.type === "catan:upgrade-city") {
+    return upgradeCatanCity(room, state, player.id, payload.vertexId);
+  }
+
+  if (payload.type === "catan:bank-trade") {
+    return tradeCatanBank(state, player.id, payload.give, payload.receive);
+  }
+
+  if (payload.type === "catan:end-turn") {
+    advanceCatanTurn(room, state, "进入下一位玩家。");
+    return null;
+  }
+
+  return "这个操作不属于卡坦岛。";
+}
+
+function placeCatanSetupSettlement(
+  state: CatanInternalState,
+  playerId: string,
+  vertexId: string
+): string | null {
+  if (state.setupPhase !== "settlement") return "请先为这个村庄连接一条道路。";
+  const error = validateCatanSettlementPlacement(state, playerId, vertexId, true);
+  if (error) return error;
+
+  const vertex = state.vertices.find((entry) => entry.id === vertexId)!;
+  vertex.building = { playerId, kind: "settlement" };
+  state.pendingSettlementVertexId = vertexId;
+  state.setupPhase = "road";
+  state.playerStates[playerId].settlements += 1;
+  updateCatanVictoryPoints(state);
+  state.resultReason = "村庄已放置，请选择相邻道路。";
+  refreshCatanStep(state);
+  return null;
+}
+
+function placeCatanSetupRoad(
+  state: CatanInternalState,
+  playerId: string,
+  edgeId: string
+): string | null {
+  if (state.setupPhase !== "road" || !state.pendingSettlementVertexId) {
+    return "请先放置村庄。";
+  }
+
+  const edge = state.edges.find((entry) => entry.id === edgeId);
+  if (!edge) return "道路位置不存在。";
+  if (edge.roadOwnerId) return "这条边已经有道路。";
+  if (!edge.vertexIds.includes(state.pendingSettlementVertexId)) {
+    return "开局道路必须连接刚放下的村庄。";
+  }
+
+  edge.roadOwnerId = playerId;
+  state.playerStates[playerId].roads += 1;
+  if (state.setupRound === 2) {
+    grantInitialCatanResources(state, playerId, state.pendingSettlementVertexId);
+  }
+
+  state.pendingSettlementVertexId = undefined;
+  advanceCatanSetup(state);
+  return null;
+}
+
+function advanceCatanSetup(state: CatanInternalState) {
+  state.setupIndex = (state.setupIndex || 0) + 1;
+  if (!state.setupOrder || state.setupIndex >= state.setupOrder.length) {
+    state.phase = "playing";
+    state.setupPhase = undefined;
+    state.setupRound = undefined;
+    state.setupOrder = undefined;
+    state.setupIndex = undefined;
+    state.currentPlayerId = Object.keys(state.playerStates)[0];
+    state.hasRolled = false;
+    state.needsRobberMove = false;
+    state.turnEndsAt = Date.now() + GAME_STEP_MS;
+    state.resultReason = "开局放置完成，正式回合开始。";
+    return;
+  }
+
+  const half = state.setupOrder.length / 2;
+  state.setupRound = state.setupIndex < half ? 1 : 2;
+  state.setupPhase = "settlement";
+  state.currentPlayerId = state.setupOrder[state.setupIndex];
+  state.turnEndsAt = Date.now() + GAME_STEP_MS;
+  state.resultReason = "请下一位玩家放置村庄。";
+}
+
+function buildCatanRoad(
+  state: CatanInternalState,
+  playerId: string,
+  edgeId: string,
+  free: boolean
+): string | null {
+  const edge = state.edges.find((entry) => entry.id === edgeId);
+  if (!edge) return "道路位置不存在。";
+  if (edge.roadOwnerId) return "这条边已经有道路。";
+  if (!isCatanRoadConnected(state, playerId, edge)) {
+    return "道路必须连接自己的道路或村庄/城市。";
+  }
+  if (!free && !spendCatanResources(state, playerId, catanBuildCosts.road)) {
+    return "资源不足：修路需要木头和砖。";
+  }
+
+  edge.roadOwnerId = playerId;
+  state.playerStates[playerId].roads += 1;
+  state.resultReason = "道路已建成。";
+  refreshCatanStep(state);
+  return null;
+}
+
+function buildCatanSettlement(
+  room: Room,
+  state: CatanInternalState,
+  playerId: string,
+  vertexId: string,
+  free: boolean
+): string | null {
+  const error = validateCatanSettlementPlacement(state, playerId, vertexId, free);
+  if (error) return error;
+  if (!free && !spendCatanResources(state, playerId, catanBuildCosts.settlement)) {
+    return "资源不足：建村需要木头、砖、羊毛和小麦。";
+  }
+
+  const vertex = state.vertices.find((entry) => entry.id === vertexId)!;
+  vertex.building = { playerId, kind: "settlement" };
+  state.playerStates[playerId].settlements += 1;
+  state.resultReason = "新的村庄已建成。";
+  updateCatanVictoryPoints(state);
+  checkCatanWinner(room, state, playerId);
+  refreshCatanStep(state);
+  return null;
+}
+
+function upgradeCatanCity(
+  room: Room,
+  state: CatanInternalState,
+  playerId: string,
+  vertexId: string
+): string | null {
+  const vertex = state.vertices.find((entry) => entry.id === vertexId);
+  if (!vertex?.building || vertex.building.playerId !== playerId) {
+    return "只能升级自己的村庄。";
+  }
+  if (vertex.building.kind !== "settlement") return "这里已经是城市。";
+  if (!spendCatanResources(state, playerId, catanBuildCosts.city)) {
+    return "资源不足：升级城市需要 2 小麦和 3 矿石。";
+  }
+
+  vertex.building.kind = "city";
+  state.playerStates[playerId].settlements -= 1;
+  state.playerStates[playerId].cities += 1;
+  state.resultReason = "村庄已升级为城市。";
+  updateCatanVictoryPoints(state);
+  checkCatanWinner(room, state, playerId);
+  refreshCatanStep(state);
+  return null;
+}
+
+function tradeCatanBank(
+  state: CatanInternalState,
+  playerId: string,
+  give: CatanResource,
+  receive: CatanResource
+): string | null {
+  if (give === receive) return "请选择不同的资源。";
+  if (!catanResources.includes(give) || !catanResources.includes(receive)) {
+    return "资源类型不正确。";
+  }
+  const playerState = state.playerStates[playerId];
+  if (playerState.resources[give] < 4) return "4:1 交换需要交出 4 个同类资源。";
+
+  playerState.resources[give] -= 4;
+  playerState.resources[receive] += 1;
+  state.resultReason = "银行 4:1 交换完成。";
+  refreshCatanStep(state);
+  return null;
+}
+
+function validateCatanSettlementPlacement(
+  state: CatanInternalState,
+  playerId: string,
+  vertexId: string,
+  free: boolean
+) {
+  const vertex = state.vertices.find((entry) => entry.id === vertexId);
+  if (!vertex) return "村庄位置不存在。";
+  if (vertex.building) return "这里已经有建筑。";
+  if (getAdjacentCatanVertices(state, vertexId).some((entry) => entry.building)) {
+    return "村庄之间必须至少隔一个交点。";
+  }
+  if (!free && !state.edges.some(
+    (edge) => edge.roadOwnerId === playerId && edge.vertexIds.includes(vertexId)
+  )) {
+    return "建村必须连接自己的道路。";
+  }
+  return null;
+}
+
+function isCatanRoadConnected(
+  state: CatanInternalState,
+  playerId: string,
+  edge: CatanEdge
+) {
+  return edge.vertexIds.some((vertexId) => {
+    const vertex = state.vertices.find((entry) => entry.id === vertexId);
+    if (vertex?.building?.playerId === playerId) return true;
+    return state.edges.some(
+      (entry) =>
+        entry.id !== edge.id &&
+        entry.roadOwnerId === playerId &&
+        entry.vertexIds.includes(vertexId)
+    );
+  });
+}
+
+function getAdjacentCatanVertices(state: CatanInternalState, vertexId: string) {
+  const adjacentIds = new Set<string>();
+  state.edges.forEach((edge) => {
+    if (!edge.vertexIds.includes(vertexId)) return;
+    edge.vertexIds.forEach((id) => {
+      if (id !== vertexId) adjacentIds.add(id);
+    });
+  });
+  return state.vertices.filter((vertex) => adjacentIds.has(vertex.id));
+}
+
+function spendCatanResources(
+  state: CatanInternalState,
+  playerId: string,
+  cost: Partial<Record<CatanResource, number>>
+) {
+  const resources = state.playerStates[playerId].resources;
+  const canPay = Object.entries(cost).every(
+    ([resource, amount]) => resources[resource as CatanResource] >= (amount || 0)
+  );
+  if (!canPay) return false;
+  Object.entries(cost).forEach(([resource, amount]) => {
+    resources[resource as CatanResource] -= amount || 0;
+  });
+  return true;
+}
+
+function produceCatanResources(state: CatanInternalState, roll: number) {
+  state.hexes
+    .filter((hex) => hex.number === roll && hex.resource && hex.id !== state.robberHexId)
+    .forEach((hex) => {
+      state.vertices
+        .filter((vertex) => vertex.adjacentHexIds.includes(hex.id) && vertex.building)
+        .forEach((vertex) => {
+          const building = vertex.building!;
+          const amount = building.kind === "city" ? 2 : 1;
+          state.playerStates[building.playerId].resources[hex.resource!] += amount;
+        });
+    });
+}
+
+function grantInitialCatanResources(
+  state: CatanInternalState,
+  playerId: string,
+  vertexId: string
+) {
+  const vertex = state.vertices.find((entry) => entry.id === vertexId);
+  if (!vertex) return;
+  vertex.adjacentHexIds.forEach((hexId) => {
+    const hex = state.hexes.find((entry) => entry.id === hexId);
+    if (hex?.resource) {
+      state.playerStates[playerId].resources[hex.resource] += 1;
+    }
+  });
+}
+
+function updateCatanVictoryPoints(state: CatanInternalState) {
+  Object.values(state.playerStates).forEach((playerState) => {
+    playerState.victoryPoints = playerState.settlements + playerState.cities * 2;
+  });
+}
+
+function refreshCatanStep(state: CatanInternalState) {
+  if (state.phase !== "ended" && state.currentPlayerId) {
+    state.turnEndsAt = Date.now() + GAME_STEP_MS;
+  }
+}
+
+function checkCatanWinner(room: Room, state: CatanInternalState, playerId: string) {
+  if (state.playerStates[playerId].victoryPoints < 10) return;
+  state.phase = "ended";
+  state.winnerId = playerId;
+  state.currentPlayerId = undefined;
+  state.turnEndsAt = undefined;
+  state.resultReason = "达到 10 分，赢得卡坦岛。";
+  room.phase = "ended";
+  clearGameStepTimer(room.code);
+  void recordGameResult(room, [playerId]);
+}
+
+function advanceCatanTurn(
+  room: Room,
+  state: CatanInternalState,
+  reason: string
+) {
+  const playerIds = room.players.map((player) => player.id);
+  const currentIndex = Math.max(0, playerIds.indexOf(state.currentPlayerId || ""));
+  state.currentPlayerId = playerIds[(currentIndex + 1) % playerIds.length];
+  state.hasRolled = false;
+  state.needsRobberMove = false;
+  state.skipVote = undefined;
+  state.turnEndsAt = Date.now() + GAME_STEP_MS;
+  state.resultReason = reason;
+}
+
+function isCatanStepExpired(state: CatanInternalState) {
+  return Boolean(
+    state.currentPlayerId &&
+      state.turnEndsAt &&
+      state.phase !== "ended" &&
+      Date.now() >= state.turnEndsAt
+  );
+}
+
+function startCatanSkipVote(room: Room, state: CatanInternalState) {
+  const target = room.players.find((player) => player.id === state.currentPlayerId);
+  startSkipVote(
+    room,
+    state,
+    state.currentPlayerId,
+    room.players
+      .map((player) => player.id)
+      .filter((playerId) => playerId !== state.currentPlayerId),
+    `${target?.name || "当前玩家"} 超过 2 分钟未操作，请大家投票是否跳过。`
+  );
+}
+
+function skipCatanTurn(room: Room, state: CatanInternalState, targetPlayerId: string) {
+  if (state.currentPlayerId !== targetPlayerId || state.phase === "ended") return;
+
+  state.pendingSettlementVertexId = undefined;
+  state.skipVote = undefined;
+  if (state.phase === "setup") {
+    advanceCatanSetup(state);
+    state.resultReason = "大家同意跳过，进入下一位开局放置。";
+    return;
+  }
+
+  advanceCatanTurn(room, state, "大家同意跳过，进入下一位玩家。");
 }
 
 function roomViewFor(room: Room, viewerId: string): RoomView {

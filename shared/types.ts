@@ -1,4 +1,4 @@
-export type GameType = "undercover" | "gomoku" | "ludo";
+export type GameType = "undercover" | "gomoku" | "ludo" | "catan";
 
 export type RoomPhase = "lobby" | "playing" | "ended";
 
@@ -50,6 +50,13 @@ export const GAME_META: Record<GameType, GameMeta> = {
     minPlayers: 2,
     maxPlayers: 4,
     shortDescription: "轮流掷骰前进，率先抵达终点。"
+  },
+  catan: {
+    type: "catan",
+    name: "卡坦岛",
+    minPlayers: 3,
+    maxPlayers: 4,
+    shortDescription: "采集资源、修路建村，先到 10 分获胜。"
   }
 };
 
@@ -121,10 +128,92 @@ export type LudoPublicState = {
   turnCount: number;
 };
 
+export type CatanResource = "wood" | "brick" | "sheep" | "wheat" | "ore";
+
+export type CatanTerrain =
+  | "forest"
+  | "hill"
+  | "pasture"
+  | "field"
+  | "mountain"
+  | "desert";
+
+export type CatanBuildingKind = "settlement" | "city";
+
+export type CatanHex = {
+  id: string;
+  q: number;
+  r: number;
+  x: number;
+  y: number;
+  terrain: CatanTerrain;
+  resource?: CatanResource;
+  number?: number;
+};
+
+export type CatanVertex = {
+  id: string;
+  x: number;
+  y: number;
+  adjacentHexIds: string[];
+  building?: {
+    playerId: string;
+    kind: CatanBuildingKind;
+  };
+};
+
+export type CatanEdge = {
+  id: string;
+  vertexIds: [string, string];
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  roadOwnerId?: string;
+};
+
+export type CatanPlayerState = {
+  resources: Record<CatanResource, number>;
+  roads: number;
+  settlements: number;
+  cities: number;
+  victoryPoints: number;
+};
+
+export type CatanSetupPhase = "settlement" | "road";
+
+export type CatanPublicState = {
+  type: "catan";
+  phase: "setup" | "playing" | "ended";
+  hexes: CatanHex[];
+  vertices: CatanVertex[];
+  edges: CatanEdge[];
+  currentPlayerId?: string;
+  turnDurationMs: number;
+  turnEndsAt?: number;
+  skipVote?: SkipVoteState;
+  setupPhase?: CatanSetupPhase;
+  setupRound?: 1 | 2;
+  setupOrder?: string[];
+  setupIndex?: number;
+  pendingSettlementVertexId?: string;
+  hasRolled: boolean;
+  needsRobberMove: boolean;
+  robberHexId: string;
+  lastRoll?: {
+    dice: [number, number];
+    total: number;
+  };
+  playerStates: Record<string, CatanPlayerState>;
+  winnerId?: string;
+  resultReason?: string;
+};
+
 export type PublicGameState =
   | UndercoverPublicState
   | GomokuPublicState
-  | LudoPublicState;
+  | LudoPublicState
+  | CatanPublicState;
 
 export type RoomView = {
   code: string;
@@ -176,4 +265,11 @@ export type GameActionPayload =
   | { type: "undercover:vote"; targetId: string }
   | { type: "gomoku:place"; x: number; y: number }
   | { type: "ludo:roll" }
+  | { type: "catan:place-settlement"; vertexId: string }
+  | { type: "catan:place-road"; edgeId: string }
+  | { type: "catan:upgrade-city"; vertexId: string }
+  | { type: "catan:roll" }
+  | { type: "catan:move-robber"; hexId: string }
+  | { type: "catan:bank-trade"; give: CatanResource; receive: CatanResource }
+  | { type: "catan:end-turn" }
   | { type: "skip:vote"; vote: SkipVoteChoice };
