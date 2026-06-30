@@ -65,12 +65,68 @@ type GameRecord = {
 const socketUrl =
   import.meta.env.VITE_SOCKET_URL ||
   (import.meta.env.DEV ? "http://localhost:3001" : window.location.origin);
+const apiUrl = import.meta.env.VITE_API_URL || socketUrl;
 
 const BRAND_NAME = "桌别零";
 const initialInviteCode = normalizeRoomCode(
   new URLSearchParams(window.location.search).get("room") || ""
 );
 const playerId = getSessionPlayerId();
+
+type SignInWithDailyLockoutResult = {
+  data: {
+    session: Session | null;
+    user: Session["user"] | null;
+  };
+  error: { message: string } | null;
+};
+
+async function signInWithDailyLockout(
+  email: string,
+  password: string
+): Promise<SignInWithDailyLockoutResult> {
+  if (!supabase) {
+    return {
+      data: { session: null, user: null },
+      error: { message: "填好 Supabase 环境变量后即可使用账号。" }
+    };
+  }
+
+  const response = await fetch(`${apiUrl.replace(/\/$/, "")}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password })
+  });
+  const payload = (await response.json().catch(() => ({}))) as {
+    error?: string;
+    session?: Session;
+  };
+
+  if (!response.ok || !payload.session?.access_token || !payload.session.refresh_token) {
+    return {
+      data: { session: null, user: null },
+      error: { message: payload.error || "登录失败，请重新输入账号密码。" }
+    };
+  }
+
+  const result = await supabase.auth.setSession({
+    access_token: payload.session.access_token,
+    refresh_token: payload.session.refresh_token
+  });
+
+  return result.error
+    ? {
+        data: { session: null, user: null },
+        error: { message: result.error.message }
+      }
+    : {
+        data: {
+          session: result.data.session,
+          user: result.data.user
+        },
+        error: null
+      };
+}
 
 export default function App() {
   const [socketConnected, setSocketConnected] = useState(false);
@@ -265,10 +321,7 @@ export default function App() {
             password,
             options: { data: { display_name: displayName } }
           })
-        : await supabase.auth.signInWithPassword({
-            email: cleanEmail,
-            password
-          });
+        : await signInWithDailyLockout(cleanEmail, password);
 
     if (result.error) {
       setNotice({ tone: "error", text: result.error.message });

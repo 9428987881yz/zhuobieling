@@ -26,6 +26,15 @@ create table if not exists public.rooms_snapshot (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.auth_login_attempts (
+  email_hash text not null,
+  attempt_day date not null,
+  failed_count integer not null default 0 check (failed_count >= 0),
+  locked_until timestamptz,
+  updated_at timestamptz not null default now(),
+  primary key (email_hash, attempt_day)
+);
+
 alter table public.game_records
   drop constraint if exists game_records_game_type_check;
 alter table public.game_records
@@ -41,6 +50,7 @@ alter table public.rooms_snapshot
 alter table public.profiles enable row level security;
 alter table public.game_records enable row level security;
 alter table public.rooms_snapshot enable row level security;
+alter table public.auth_login_attempts enable row level security;
 
 drop policy if exists "Profiles are readable by everyone" on public.profiles;
 create policy "Profiles are readable by everyone"

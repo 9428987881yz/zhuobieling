@@ -2,6 +2,7 @@ import "dotenv/config";
 import cors from "cors";
 import express from "express";
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { Server, Socket } from "socket.io";
@@ -101,10 +102,17 @@ const io = new Server(server, {
 });
 
 const supabase = createSupabaseClient();
+const supabaseAuth = createSupabaseAuthClient();
 const rooms = new Map<string, Room>();
 const cleanupTimers = new Map<string, NodeJS.Timeout>();
 const gameStepTimers = new Map<string, NodeJS.Timeout>();
 const GAME_STEP_MS = 2 * 60 * 1000;
+const MAX_DAILY_LOGIN_FAILURES = 6;
+const LOGIN_LOCK_TIME_ZONE = process.env.LOGIN_LOCK_TIME_ZONE || "Asia/Shanghai";
+const fallbackLoginAttempts = new Map<
+  string,
+  { dayKey: string; failedCount: number; lockedUntilMs: number }
+>();
 
 const palette = [
   "#0ea5a4",
@@ -174,7 +182,91 @@ app.get("/api/health", (_req, res) => {
   res.json({
     ok: true,
     rooms: rooms.size,
-    supabase: Boolean(supabase)
+    supabase: Boolean(supabase),
+    supabaseAuth: Boolean(supabaseAuth)
+  });
+});
+
+app.post("/api/auth/login", async (req, res) => {
+  if (!supabase || !supabaseAuth) {
+    res.status(503).json({ error: "账号系统还没配置完成，请稍后再试。" });
+    return;
+  }
+
+  const email = normalizeLoginEmail(req.body?.email);
+  const password = typeof req.body?.password === "string" ? req.body.password : "";
+  if (!email || password.length < 6) {
+    res.status(400).json({ error: "请输入邮箱，密码至少 6 位。" });
+    return;
+  }
+
+  const now = new Date();
+  const dayKey = getLoginDayKey(now);
+  const lockedUntil = getNextLoginDayStart(now);
+  const emailHash = hashLoginEmail(email);
+  const attempt = await readLoginAttempt(emailHash, dayKey);
+
+  if (
+    attempt.lockedUntilMs > now.getTime() ||
+    attempt.failedCount >= MAX_DAILY_LOGIN_FAILURES
+  ) {
+    const lockMs =
+      attempt.lockedUntilMs > now.getTime()
+        ? attempt.lockedUntilMs
+        : lockedUntil.getTime();
+    await saveLoginAttempt(emailHash, dayKey, MAX_DAILY_LOGIN_FAILURES, lockMs);
+    res.status(423).json({
+      error: "密码已输错 6 次，今天不能再登录，请明天再试。",
+      remainingAttempts: 0,
+      lockedUntil: new Date(lockMs).toISOString()
+    });
+    return;
+  }
+
+  const { data, error } = await supabaseAuth.auth.signInWithPassword({
+    email,
+    password
+  });
+
+  if (error) {
+    if (isInvalidLoginError(error)) {
+      const nextFailedCount = Math.min(
+        MAX_DAILY_LOGIN_FAILURES,
+        attempt.failedCount + 1
+      );
+      const lockMs =
+        nextFailedCount >= MAX_DAILY_LOGIN_FAILURES ? lockedUntil.getTime() : 0;
+      await saveLoginAttempt(emailHash, dayKey, nextFailedCount, lockMs);
+      const remainingAttempts = Math.max(
+        0,
+        MAX_DAILY_LOGIN_FAILURES - nextFailedCount
+      );
+
+      res.status(remainingAttempts === 0 ? 423 : 401).json({
+        error:
+          remainingAttempts === 0
+            ? "密码已输错 6 次，今天不能再登录，请明天再试。"
+            : `邮箱或密码不正确，今天还可以再试 ${remainingAttempts} 次。`,
+        remainingAttempts,
+        lockedUntil:
+          remainingAttempts === 0 ? new Date(lockMs).toISOString() : undefined
+      });
+      return;
+    }
+
+    res.status(401).json({ error: error.message });
+    return;
+  }
+
+  if (!data.session || !data.user) {
+    res.status(401).json({ error: "登录失败，请重新输入账号密码。" });
+    return;
+  }
+
+  await clearLoginAttempt(emailHash, dayKey);
+  res.json({
+    session: data.session,
+    user: data.user
   });
 });
 
@@ -419,6 +511,122 @@ function createSupabaseClient(): SupabaseClient | null {
       persistSession: false
     }
   });
+}
+
+function createSupabaseAuthClient(): SupabaseClient | null {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
+    }
+  });
+}
+
+function normalizeLoginEmail(value: unknown) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function hashLoginEmail(email: string) {
+  return createHash("sha256").update(email).digest("hex");
+}
+
+function getLoginDayKey(date: Date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: LOGIN_LOCK_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+  return `${year}-${month}-${day}`;
+}
+
+function getNextLoginDayStart(now: Date) {
+  const currentDay = getLoginDayKey(now);
+  let probe = new Date(now.getTime() + 60 * 60 * 1000);
+  for (let index = 0; index < 48 && getLoginDayKey(probe) === currentDay; index += 1) {
+    probe = new Date(probe.getTime() + 60 * 60 * 1000);
+  }
+
+  let low = now.getTime();
+  let high = probe.getTime();
+  for (let index = 0; index < 40; index += 1) {
+    const middle = Math.floor((low + high) / 2);
+    if (getLoginDayKey(new Date(middle)) === currentDay) {
+      low = middle;
+    } else {
+      high = middle;
+    }
+  }
+
+  return new Date(high);
+}
+
+function isInvalidLoginError(error: { message?: string }) {
+  const message = error.message?.toLowerCase() || "";
+  return (
+    message.includes("invalid login credentials") ||
+    message.includes("invalid credentials")
+  );
+}
+
+async function readLoginAttempt(emailHash: string, dayKey: string) {
+  const memoryAttempt = fallbackLoginAttempts.get(`${emailHash}:${dayKey}`);
+  let failedCount = memoryAttempt?.failedCount || 0;
+  let lockedUntilMs = memoryAttempt?.lockedUntilMs || 0;
+
+  if (supabase) {
+    const { data, error } = await supabase
+      .from("auth_login_attempts")
+      .select("failed_count, locked_until")
+      .eq("email_hash", emailHash)
+      .eq("attempt_day", dayKey)
+      .maybeSingle();
+
+    if (!error && data) {
+      failedCount = Math.max(failedCount, Number(data.failed_count) || 0);
+      lockedUntilMs = Math.max(
+        lockedUntilMs,
+        data.locked_until ? Date.parse(String(data.locked_until)) || 0 : 0
+      );
+    }
+  }
+
+  return { failedCount, lockedUntilMs };
+}
+
+async function saveLoginAttempt(
+  emailHash: string,
+  dayKey: string,
+  failedCount: number,
+  lockedUntilMs: number
+) {
+  const key = `${emailHash}:${dayKey}`;
+  fallbackLoginAttempts.set(key, { dayKey, failedCount, lockedUntilMs });
+
+  if (!supabase) return;
+  await supabase.from("auth_login_attempts").upsert({
+    email_hash: emailHash,
+    attempt_day: dayKey,
+    failed_count: failedCount,
+    locked_until: lockedUntilMs ? new Date(lockedUntilMs).toISOString() : null,
+    updated_at: new Date().toISOString()
+  });
+}
+
+async function clearLoginAttempt(emailHash: string, dayKey: string) {
+  fallbackLoginAttempts.delete(`${emailHash}:${dayKey}`);
+  if (!supabase) return;
+  await supabase
+    .from("auth_login_attempts")
+    .delete()
+    .eq("email_hash", emailHash)
+    .eq("attempt_day", dayKey);
 }
 
 async function requireRegisteredProfile(
