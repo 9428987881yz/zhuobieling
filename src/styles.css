@@ -250,7 +250,7 @@ button:disabled {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
-  margin: 10px 0 18px;
+  margin: 2px 0 18px;
 }
 
 .home-metrics div {
@@ -298,7 +298,7 @@ button:disabled {
   align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
-  padding: 14px 0 10px;
+  padding: 14px 0 4px;
 }
 
 .home-title-band .brand-lockup {
@@ -324,9 +324,9 @@ button:disabled {
 .home-play-panel {
   align-self: center;
   display: grid;
-  gap: 8px;
-  width: min(100%, 270px);
-  padding: 12px;
+  gap: 6px;
+  width: min(100%, 250px);
+  padding: 10px 12px;
   background: #fff;
   border: 1px solid #dbe4ef;
   border-radius: 8px;
@@ -339,35 +339,35 @@ button:disabled {
 
 .play-panel-head {
   display: grid;
-  gap: 4px;
+  gap: 3px;
 }
 
 .play-panel-head strong {
   color: #152033;
-  font-size: 1rem;
+  font-size: 0.96rem;
 }
 
 .play-panel-head small {
   color: #667589;
-  font-size: 0.86rem;
-  line-height: 1.45;
+  font-size: 0.8rem;
+  line-height: 1.35;
 }
 
-.hero-action {
-  min-height: 38px;
-  margin-top: 2px;
+.home-play-panel .hero-action {
+  min-height: 34px;
+  margin-top: 0;
   padding: 0 12px;
-  font-size: 0.92rem;
+  font-size: 0.86rem;
 }
 
-.hero-link-action {
+.home-play-panel .hero-link-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 4px;
-  min-height: 30px;
+  min-height: 28px;
   color: var(--brand-ink);
-  font-size: 0.9rem;
+  font-size: 0.84rem;
   text-decoration: none;
   font-weight: 900;
 }
