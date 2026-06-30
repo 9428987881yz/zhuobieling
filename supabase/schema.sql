@@ -11,7 +11,7 @@ create table if not exists public.profiles (
 create table if not exists public.game_records (
   id uuid primary key default gen_random_uuid(),
   room_code text not null,
-  game_type text not null check (game_type in ('undercover', 'gomoku', 'ludo')),
+  game_type text not null check (game_type in ('undercover', 'gomoku', 'ludo', 'catan')),
   user_id uuid references auth.users(id) on delete set null,
   player_name text not null,
   result text not null check (result in ('win', 'loss', 'draw')),
@@ -20,11 +20,23 @@ create table if not exists public.game_records (
 
 create table if not exists public.rooms_snapshot (
   room_code text primary key,
-  game_type text not null check (game_type in ('undercover', 'gomoku', 'ludo')),
+  game_type text not null check (game_type in ('undercover', 'gomoku', 'ludo', 'catan')),
   phase text not null,
   player_count integer not null default 0,
   updated_at timestamptz not null default now()
 );
+
+alter table public.game_records
+  drop constraint if exists game_records_game_type_check;
+alter table public.game_records
+  add constraint game_records_game_type_check
+  check (game_type in ('undercover', 'gomoku', 'ludo', 'catan'));
+
+alter table public.rooms_snapshot
+  drop constraint if exists rooms_snapshot_game_type_check;
+alter table public.rooms_snapshot
+  add constraint rooms_snapshot_game_type_check
+  check (game_type in ('undercover', 'gomoku', 'ludo', 'catan'));
 
 alter table public.profiles enable row level security;
 alter table public.game_records enable row level security;
