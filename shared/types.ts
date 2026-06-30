@@ -60,6 +60,8 @@ export type UndercoverPublicState = {
   stage: UndercoverStage;
   round: number;
   currentSpeakerId?: string;
+  turnDurationMs: number;
+  turnEndsAt?: number;
   spokenCount: number;
   myWord?: string;
   myRole?: "civilian" | "undercover";
@@ -95,11 +97,15 @@ export type LudoPublicState = {
   finish: number;
   positions: Record<string, number>;
   currentPlayerId?: string;
+  turnDurationMs: number;
+  turnEndsAt?: number;
   lastRoll?: {
     playerId: string;
     value: number;
   };
   winnerId?: string;
+  timeoutLoserId?: string;
+  resultReason?: string;
   turnCount: number;
 };
 

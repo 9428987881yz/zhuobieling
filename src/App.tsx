@@ -703,6 +703,10 @@ function UndercoverGame({
   const currentSpeaker = room.players.find(
     (player) => player.id === state.currentSpeakerId
   );
+  const timeLeftMs = useCountdown(state.turnEndsAt);
+  const timePercent = state.turnDurationMs
+    ? Math.max(0, Math.min(100, (timeLeftMs / state.turnDurationMs) * 100))
+    : 0;
   const activePlayers = room.players.filter(
     (player) => !state.eliminatedIds.includes(player.id)
   );
@@ -743,6 +747,27 @@ function UndercoverGame({
       </div>
 
       {state.reason && <p className="result-line">{state.reason}</p>}
+
+      {state.stage !== "ended" && (
+        <div className="turn-confirm-panel">
+          <div className="timer-card">
+            <span>本步剩余</span>
+            <strong>{formatDuration(timeLeftMs)}</strong>
+            <div className="timer-track">
+              <i style={{ width: `${timePercent}%` }} />
+            </div>
+          </div>
+          <div className="move-confirm-card">
+            <span>
+              {state.stage === "speaking"
+                ? currentSpeaker
+                  ? `${currentSpeaker.name} 需要在 2 分钟内完成发言`
+                  : "发言阶段限时 2 分钟"
+                : "投票阶段限时 2 分钟，时间到会按已投票结果结算"}
+            </span>
+          </div>
+        </div>
+      )}
 
       {state.stage === "speaking" && (
         <div className="turn-panel">
@@ -834,7 +859,6 @@ function GomokuGame({
   const [selectedMove, setSelectedMove] = useState<{ x: number; y: number } | null>(
     null
   );
-  const [now, setNow] = useState(Date.now());
   const current = room.players.find((player) => player.id === state.currentPlayerId);
   const winner = room.players.find((player) => player.id === state.winnerId);
   const timeoutLoser = room.players.find(
@@ -843,18 +867,13 @@ function GomokuGame({
   const myStone = state.playerStones[playerId];
   const isMyTurn = state.currentPlayerId === playerId;
   const canSelectMove = isMyTurn && !state.winnerId && !state.isDraw && Boolean(myStone);
-  const timeLeftMs = Math.max(0, (state.turnEndsAt || 0) - now);
+  const timeLeftMs = useCountdown(state.turnEndsAt);
   const timePercent = state.turnDurationMs
     ? Math.max(0, Math.min(100, (timeLeftMs / state.turnDurationMs) * 100))
     : 0;
   const winningSet = new Set(
     state.winningLine?.map(([x, y]) => `${x}:${y}`) || []
   );
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
 
   useEffect(() => {
     setSelectedMove(null);
@@ -977,6 +996,13 @@ function LudoGame({
 }) {
   const current = room.players.find((player) => player.id === state.currentPlayerId);
   const winner = room.players.find((player) => player.id === state.winnerId);
+  const timeoutLoser = room.players.find(
+    (player) => player.id === state.timeoutLoserId
+  );
+  const timeLeftMs = useCountdown(state.turnEndsAt);
+  const timePercent = state.turnDurationMs
+    ? Math.max(0, Math.min(100, (timeLeftMs / state.turnDurationMs) * 100))
+    : 0;
   const track = Array.from({ length: state.finish + 1 }, (_, index) => index);
 
   return (
@@ -990,6 +1016,27 @@ function LudoGame({
           {winner ? `${winner.name} 抵达终点` : `轮到 ${current?.name || "等待"}`}
         </span>
       </div>
+
+      {!winner && (
+        <div className="turn-confirm-panel">
+          <div className="timer-card">
+            <span>本步剩余</span>
+            <strong>{formatDuration(timeLeftMs)}</strong>
+            <div className="timer-track">
+              <i style={{ width: `${timePercent}%` }} />
+            </div>
+          </div>
+          <div className="move-confirm-card">
+            <span>
+              {state.resultReason ||
+                (current
+                  ? `${current.name} 需要在 2 分钟内掷骰`
+                  : "本局已结束")}
+            </span>
+            {timeoutLoser && <small>{timeoutLoser.name} 超时未掷骰。</small>}
+          </div>
+        </div>
+      )}
 
       <div className="dice-panel">
         <button
@@ -1301,6 +1348,23 @@ function normalizeRoomCode(value: string) {
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "")
     .slice(0, 6);
+}
+
+function useCountdown(endsAt?: number) {
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    if (!endsAt) {
+      setNow(Date.now());
+      return;
+    }
+
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [endsAt]);
+
+  return Math.max(0, (endsAt || 0) - now);
 }
 
 function formatDuration(ms: number) {

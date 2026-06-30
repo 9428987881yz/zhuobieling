@@ -92,8 +92,8 @@ const io = new Server(server, {
 const supabase = createSupabaseClient();
 const rooms = new Map<string, Room>();
 const cleanupTimers = new Map<string, NodeJS.Timeout>();
-const gomokuTurnTimers = new Map<string, NodeJS.Timeout>();
-const GOMOKU_TURN_MS = 5 * 60 * 1000;
+const gameStepTimers = new Map<string, NodeJS.Timeout>();
+const GAME_STEP_MS = 2 * 60 * 1000;
 
 const palette = [
   "#0ea5a4",
@@ -271,7 +271,7 @@ io.on("connection", (socket: SocketWithData) => {
 
     context.room.phase = "playing";
     context.room.gameState = createInitialGameState(context.room);
-    scheduleGomokuTurnTimer(context.room);
+    scheduleGameStepTimer(context.room);
     context.room.players.forEach((player) => {
       player.ready = false;
     });
@@ -293,7 +293,7 @@ io.on("connection", (socket: SocketWithData) => {
 
     context.room.phase = "lobby";
     context.room.gameState = null;
-    clearGomokuTurnTimer(context.room.code);
+    clearGameStepTimer(context.room.code);
     context.room.players.forEach((player) => {
       player.ready = false;
     });
@@ -330,6 +330,7 @@ io.on("connection", (socket: SocketWithData) => {
       return;
     }
 
+    scheduleGameStepTimer(context.room);
     void snapshotRoom(context.room);
     emitRoom(context.room);
   });
@@ -416,7 +417,7 @@ function leaveCurrentRoom(socket: SocketWithData, explicit: boolean) {
   }
 
   if (room.players.length === 0) {
-    clearGomokuTurnTimer(room.code);
+    clearGameStepTimer(room.code);
     rooms.delete(room.code);
     return;
   }
@@ -483,6 +484,8 @@ function createUndercoverState(room: Room): UndercoverInternalState {
     stage: "speaking",
     round: 1,
     currentSpeakerId: order[0],
+    turnDurationMs: GAME_STEP_MS,
+    turnEndsAt: Date.now() + GAME_STEP_MS,
     spokenCount: 0,
     eliminatedIds: [],
     votes: {},
@@ -504,8 +507,8 @@ function createGomokuState(room: Room): GomokuPublicState {
     size,
     board: Array.from({ length: size }, () => Array<GomokuStone | null>(size).fill(null)),
     currentPlayerId: room.players[0]?.id,
-    turnDurationMs: GOMOKU_TURN_MS,
-    turnEndsAt: Date.now() + GOMOKU_TURN_MS,
+    turnDurationMs: GAME_STEP_MS,
+    turnEndsAt: Date.now() + GAME_STEP_MS,
     playerStones,
     moves: 0
   };
@@ -518,6 +521,8 @@ function createLudoState(room: Room): LudoInternalState {
     finish: 30,
     positions: Object.fromEntries(order.map((playerId) => [playerId, 0])),
     currentPlayerId: order[0],
+    turnDurationMs: GAME_STEP_MS,
+    turnEndsAt: Date.now() + GAME_STEP_MS,
     turnCount: 1,
     order,
     turnIndex: 0
@@ -551,6 +556,10 @@ function applyUndercoverAction(
 ): string | null {
   const activeIds = getActiveUndercoverIds(state);
   if (state.stage === "ended") return "本局已经结束。";
+  if (isUndercoverStepExpired(state)) {
+    resolveUndercoverTimeout(room, state);
+    return null;
+  }
 
   if (payload.type === "undercover:next-speaker") {
     if (
@@ -566,12 +575,14 @@ function applyUndercoverAction(
       state.currentSpeakerId = undefined;
       state.spokenCount = activeIds.length;
       state.votes = {};
+      state.turnEndsAt = Date.now() + GAME_STEP_MS;
       return null;
     }
 
     state.spokenCount = nextSpokenCount;
     state.speakerCursor = nextActiveSpeakerCursor(state);
     state.currentSpeakerId = state.order[state.speakerCursor];
+    state.turnEndsAt = Date.now() + GAME_STEP_MS;
     return null;
   }
 
@@ -588,6 +599,59 @@ function applyUndercoverAction(
   }
 
   return "这个操作不属于谁是卧底。";
+}
+
+function isUndercoverStepExpired(state: UndercoverInternalState) {
+  return Boolean(
+    state.stage !== "ended" &&
+      state.turnEndsAt &&
+      Date.now() >= state.turnEndsAt
+  );
+}
+
+function resolveUndercoverTimeout(room: Room, state: UndercoverInternalState) {
+  if (state.stage === "ended") return;
+  const now = Date.now();
+
+  if (state.stage === "speaking") {
+    const activeIds = getActiveUndercoverIds(state);
+    const speaker = room.players.find(
+      (player) => player.id === state.currentSpeakerId
+    );
+    const nextSpokenCount = state.spokenCount + 1;
+    state.reason = `${speaker?.name || "当前玩家"} 发言超过 2 分钟，已自动跳到下一步。`;
+
+    if (nextSpokenCount >= activeIds.length) {
+      state.stage = "voting";
+      state.currentSpeakerId = undefined;
+      state.spokenCount = activeIds.length;
+      state.votes = {};
+      state.turnEndsAt = now + GAME_STEP_MS;
+      return;
+    }
+
+    state.spokenCount = nextSpokenCount;
+    state.speakerCursor = nextActiveSpeakerCursor(state);
+    state.currentSpeakerId = state.order[state.speakerCursor];
+    state.turnEndsAt = now + GAME_STEP_MS;
+    return;
+  }
+
+  if (Object.keys(state.votes).length > 0) {
+    state.reason = "投票超过 2 分钟，按已投票结果结算。";
+    resolveUndercoverVote(room, state);
+    return;
+  }
+
+  state.round += 1;
+  state.stage = "speaking";
+  state.spokenCount = 0;
+  state.votes = {};
+  state.lastEliminatedId = undefined;
+  state.reason = "投票超过 2 分钟且无人投票，本轮无人出局。";
+  state.speakerCursor = firstActiveSpeakerCursor(state);
+  state.currentSpeakerId = state.order[state.speakerCursor];
+  state.turnEndsAt = now + GAME_STEP_MS;
 }
 
 function resolveUndercoverVote(room: Room, state: UndercoverInternalState) {
@@ -616,6 +680,7 @@ function resolveUndercoverVote(room: Room, state: UndercoverInternalState) {
     state.reason = "平票，本轮无人出局。";
     state.speakerCursor = firstActiveSpeakerCursor(state);
     state.currentSpeakerId = state.order[state.speakerCursor];
+    state.turnEndsAt = Date.now() + GAME_STEP_MS;
     return;
   }
 
@@ -645,6 +710,7 @@ function resolveUndercoverVote(room: Room, state: UndercoverInternalState) {
   state.reason = "投票完成，进入下一轮发言。";
   state.speakerCursor = firstActiveSpeakerCursor(state);
   state.currentSpeakerId = state.order[state.speakerCursor];
+  state.turnEndsAt = Date.now() + GAME_STEP_MS;
 }
 
 function endUndercoverGame(
@@ -655,6 +721,7 @@ function endUndercoverGame(
 ) {
   state.stage = "ended";
   state.currentSpeakerId = undefined;
+  state.turnEndsAt = undefined;
   state.winnerTeam = winnerTeam;
   state.reason = reason;
   state.winnerIds = Object.entries(state.assignments)
@@ -706,7 +773,7 @@ function applyGomokuAction(
     state.turnEndsAt = undefined;
     state.resultReason = "五子连珠，获胜。";
     room.phase = "ended";
-    clearGomokuTurnTimer(room.code);
+    clearGameStepTimer(room.code);
     void recordGameResult(room, [player.id]);
     return null;
   }
@@ -717,7 +784,7 @@ function applyGomokuAction(
     state.turnEndsAt = undefined;
     state.resultReason = "棋盘已满，平局。";
     room.phase = "ended";
-    clearGomokuTurnTimer(room.code);
+    clearGameStepTimer(room.code);
     void recordGameResult(room, [], true);
     return null;
   }
@@ -726,8 +793,7 @@ function applyGomokuAction(
     (entry) => entry.id !== player.id && state.playerStones[entry.id]
   );
   state.currentPlayerId = nextPlayer?.id;
-  state.turnEndsAt = state.currentPlayerId ? Date.now() + GOMOKU_TURN_MS : undefined;
-  scheduleGomokuTurnTimer(room);
+  state.turnEndsAt = state.currentPlayerId ? Date.now() + GAME_STEP_MS : undefined;
   return null;
 }
 
@@ -741,49 +807,84 @@ function isGomokuTurnExpired(state: GomokuPublicState) {
   );
 }
 
-function scheduleGomokuTurnTimer(room: Room) {
-  clearGomokuTurnTimer(room.code);
+function scheduleGameStepTimer(room: Room) {
+  clearGameStepTimer(room.code);
   const state = room.gameState;
+  if (room.phase !== "playing" || !state || !state.turnEndsAt) {
+    return;
+  }
+
   if (
-    room.phase !== "playing" ||
-    !state ||
-    state.type !== "gomoku" ||
-    !state.currentPlayerId ||
-    !state.turnEndsAt ||
-    state.winnerId ||
-    state.isDraw
+    state.type === "gomoku" &&
+    (!state.currentPlayerId || state.winnerId || state.isDraw)
   ) {
     return;
   }
 
-  const expectedPlayerId = state.currentPlayerId;
+  if (
+    state.type === "undercover" &&
+    (state.stage === "ended" || !state.turnEndsAt)
+  ) {
+    return;
+  }
+
+  if (
+    state.type === "ludo" &&
+    (!state.currentPlayerId || state.winnerId)
+  ) {
+    return;
+  }
+
+  const expectedPlayerId =
+    state.type === "undercover" ? state.currentSpeakerId : state.currentPlayerId;
+  const expectedStage = state.type === "undercover" ? state.stage : undefined;
   const delay = Math.max(0, state.turnEndsAt - Date.now());
   const timer = setTimeout(() => {
     const currentRoom = rooms.get(room.code);
     const currentState = currentRoom?.gameState;
-    if (
-      !currentRoom ||
-      currentRoom.phase !== "playing" ||
-      !currentState ||
-      currentState.type !== "gomoku" ||
-      currentState.currentPlayerId !== expectedPlayerId ||
-      !isGomokuTurnExpired(currentState)
-    ) {
+    if (!currentRoom || currentRoom.phase !== "playing" || !currentState) {
       return;
     }
 
-    resolveGomokuTimeout(currentRoom, currentState, expectedPlayerId);
+    if (currentState.type === "gomoku") {
+      if (
+        currentState.currentPlayerId !== expectedPlayerId ||
+        !isGomokuTurnExpired(currentState)
+      ) {
+        return;
+      }
+      resolveGomokuTimeout(currentRoom, currentState, expectedPlayerId);
+    } else if (currentState.type === "undercover") {
+      if (
+        currentState.stage !== expectedStage ||
+        currentState.currentSpeakerId !== expectedPlayerId ||
+        !isUndercoverStepExpired(currentState)
+      ) {
+        return;
+      }
+      resolveUndercoverTimeout(currentRoom, currentState);
+      scheduleGameStepTimer(currentRoom);
+    } else {
+      if (
+        currentState.currentPlayerId !== expectedPlayerId ||
+        !isLudoTurnExpired(currentState)
+      ) {
+        return;
+      }
+      resolveLudoTimeout(currentRoom, currentState, expectedPlayerId);
+    }
+
     void snapshotRoom(currentRoom);
     emitRoom(currentRoom);
   }, delay + 100);
 
-  gomokuTurnTimers.set(room.code, timer);
+  gameStepTimers.set(room.code, timer);
 }
 
-function clearGomokuTurnTimer(roomCode: string) {
-  const timer = gomokuTurnTimers.get(roomCode);
+function clearGameStepTimer(roomCode: string) {
+  const timer = gameStepTimers.get(roomCode);
   if (timer) clearTimeout(timer);
-  gomokuTurnTimers.delete(roomCode);
+  gameStepTimers.delete(roomCode);
 }
 
 function resolveGomokuTimeout(
@@ -801,10 +902,10 @@ function resolveGomokuTimeout(
   state.currentPlayerId = undefined;
   state.turnEndsAt = undefined;
   state.resultReason = winner
-    ? "超过 5 分钟未确认落子，超时判负。"
-    : "超过 5 分钟未确认落子，本局结束。";
+    ? "超过 2 分钟未确认落子，超时判负。"
+    : "超过 2 分钟未确认落子，本局结束。";
   room.phase = "ended";
-  clearGomokuTurnTimer(room.code);
+  clearGameStepTimer(room.code);
   emitSystemMessage(room, state.resultReason);
   void recordGameResult(room, winner ? [winner.id] : [], !winner);
 }
@@ -817,6 +918,10 @@ function applyLudoAction(
 ): string | null {
   if (payload.type !== "ludo:roll") return "这个操作不属于飞行棋。";
   if (state.winnerId) return "本局已经结束。";
+  if (isLudoTurnExpired(state)) {
+    resolveLudoTimeout(room, state, state.currentPlayerId);
+    return null;
+  }
   if (state.currentPlayerId !== player.id) return "还没轮到你。";
 
   const value = randomInt(6) + 1;
@@ -829,15 +934,51 @@ function applyLudoAction(
   if (state.positions[player.id] >= state.finish) {
     state.winnerId = player.id;
     state.currentPlayerId = undefined;
+    state.turnEndsAt = undefined;
+    state.resultReason = "率先抵达终点，获胜。";
     room.phase = "ended";
+    clearGameStepTimer(room.code);
     void recordGameResult(room, [player.id]);
     return null;
   }
 
   state.turnIndex = (state.turnIndex + 1) % state.order.length;
   state.currentPlayerId = state.order[state.turnIndex];
+  state.turnEndsAt = Date.now() + GAME_STEP_MS;
   state.turnCount += 1;
   return null;
+}
+
+function isLudoTurnExpired(state: LudoInternalState) {
+  return Boolean(
+    state.currentPlayerId &&
+      state.turnEndsAt &&
+      !state.winnerId &&
+      Date.now() >= state.turnEndsAt
+  );
+}
+
+function resolveLudoTimeout(
+  room: Room,
+  state: LudoInternalState,
+  loserId?: string
+) {
+  if (!loserId || state.winnerId) return;
+  const winner = room.players.find(
+    (entry) => entry.id !== loserId && Object.hasOwn(state.positions, entry.id)
+  );
+
+  state.timeoutLoserId = loserId;
+  state.winnerId = winner?.id;
+  state.currentPlayerId = undefined;
+  state.turnEndsAt = undefined;
+  state.resultReason = winner
+    ? "超过 2 分钟未掷骰，超时判负。"
+    : "超过 2 分钟未掷骰，本局结束。";
+  room.phase = "ended";
+  clearGameStepTimer(room.code);
+  emitSystemMessage(room, state.resultReason);
+  void recordGameResult(room, winner ? [winner.id] : [], !winner);
 }
 
 function roomViewFor(room: Room, viewerId: string): RoomView {
