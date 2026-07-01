@@ -129,6 +129,16 @@ type LobbyFeature = {
   text: string;
 };
 
+type PopularGamePlan = {
+  name: string;
+  reference: string;
+  genre: string;
+  players: string;
+  status: "available" | "needsLicense" | "candidate";
+  note: string;
+  game?: GameType;
+};
+
 const gameCategories: GameCategory[] = [
   {
     title: "推理派对",
@@ -231,6 +241,74 @@ const lobbyFeatures: LobbyFeature[] = [
     icon: <MessageSquare size={19} />,
     title: "房间内沟通",
     text: "先用文字聊天，后续可以继续扩展语音。"
+  }
+];
+
+const popularGamePlans: PopularGamePlan[] = [
+  {
+    name: "卡坦岛",
+    reference: "CATAN",
+    genre: "资源经营",
+    players: "3-4 人",
+    status: "available",
+    note: "已加入简版，可继续补交易、发展卡和港口。",
+    game: "catan"
+  },
+  {
+    name: "方舟动物园",
+    reference: "Ark Nova",
+    genre: "重策略",
+    players: "1-4 人",
+    status: "needsLicense",
+    note: "热门但版权明确，需要授权后再做正式版本。"
+  },
+  {
+    name: "火星殖民",
+    reference: "Terraforming Mars",
+    genre: "引擎构筑",
+    players: "2-5 人",
+    status: "needsLicense",
+    note: "适合做长期策略桌，正式搬运前需确认授权。"
+  },
+  {
+    name: "展翅翱翔",
+    reference: "Wingspan",
+    genre: "卡牌经营",
+    players: "1-5 人",
+    status: "needsLicense",
+    note: "美术和牌库都很重要，不能直接复制素材。"
+  },
+  {
+    name: "花砖物语",
+    reference: "Azul",
+    genre: "抽象策略",
+    players: "2-4 人",
+    status: "needsLicense",
+    note: "可以先研究同类抽象拼放玩法的原创版本。"
+  },
+  {
+    name: "车票之旅",
+    reference: "Ticket to Ride",
+    genre: "路线规划",
+    players: "2-5 人",
+    status: "needsLicense",
+    note: "地图、牌面、品牌均需授权，建议先做原创路线游戏。"
+  },
+  {
+    name: "五骰快艇",
+    reference: "Yahtzee 类型",
+    genre: "骰子计分",
+    players: "2-6 人",
+    status: "candidate",
+    note: "规则轻、开发快，适合下一批优先上线。"
+  },
+  {
+    name: "双陆棋",
+    reference: "Backgammon",
+    genre: "经典对弈",
+    players: "2 人",
+    status: "candidate",
+    note: "经典公共玩法，可做自己的界面与计分。"
   }
 ];
 
@@ -1013,6 +1091,65 @@ export default function App() {
                   </div>
                 ))}
               </div>
+            </div>
+          </section>
+
+          <section className="popular-plan-section" aria-label="热门游戏扩展计划">
+            <div className="popular-plan-head">
+              <div>
+                <span className="panel-kicker">热门扩展</span>
+                <h2>想搬热门游戏，先做合规分层</h2>
+                <p>
+                  热门桌游可以参考玩法方向，但正式上线前要避开商标、美术、牌面和受保护文本；能先做的会标成候选。
+                </p>
+              </div>
+              <div className="popular-plan-legend" aria-label="状态说明">
+                <span className="available">已上线简版</span>
+                <span className="candidate">可先开发</span>
+                <span className="needsLicense">需授权</span>
+              </div>
+            </div>
+
+            <div className="popular-plan-grid">
+              {popularGamePlans.map((plan) => (
+                <button
+                  className={`popular-plan-card ${plan.status}`}
+                  key={`${plan.reference}-${plan.name}`}
+                  onClick={() => {
+                    if (plan.game) {
+                      openGame(plan.game);
+                      return;
+                    }
+                    setNotice({
+                      tone: "info",
+                      text:
+                        plan.status === "needsLicense"
+                          ? `${plan.name} 属于需授权热门游戏，不能直接搬运素材或完整规则。`
+                          : `${plan.name} 已加入可优先开发候选。`
+                    });
+                  }}
+                  type="button"
+                >
+                  <span className="popular-plan-status">
+                    {plan.status === "available"
+                      ? "已上线"
+                      : plan.status === "candidate"
+                        ? "候选"
+                        : "授权"}
+                  </span>
+                  <strong>{plan.name}</strong>
+                  <small>{plan.reference}</small>
+                  <div className="popular-plan-meta">
+                    <span>{plan.genre}</span>
+                    <span>{plan.players}</span>
+                  </div>
+                  <p>{plan.note}</p>
+                  <span className="popular-plan-link">
+                    {plan.game ? "进入游戏" : "查看处理方式"}
+                    <ChevronRight size={16} />
+                  </span>
+                </button>
+              ))}
             </div>
           </section>
 
